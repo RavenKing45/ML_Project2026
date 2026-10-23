@@ -1,4 +1,16 @@
-.env
+# Python
+__pycache__/
+*.py[cod]
 .venv/
-.json
-data/
+venv/
+
+# Data
+data/raw/
+data/processed/
+
+# Generated model files
+*.joblib
+*.pkl
+
+# Jupyter
+.ipynb_checkpoints/
