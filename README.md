@@ -32,6 +32,38 @@ for development only).
 | export for the backend | `python scripts/export_artifacts.py --source raw --default-cell <model>__<technique> [--rerun-reason "<why>"]` | `artifacts/models/manifest.json`, `feature_reference.json`, `deploy/<id>.joblib` (+ `.calibrator.joblib`; git-ignored), `artifacts/demo/presets.json`, `data/sample/demo_batch.csv`. Deploys `deploy.cells` in experiment.yaml (6 LightGBM + logreg for the default's technique); the team picks the default cell from the CV results, the script never does; run after the test evaluation (recorded in the guard). `--source sample` writes to `artifacts/models/sample/` and `artifacts/demo/sample/` |
 | checks | `ruff check . && pytest -q` | lint and tests (synthetic sample only) |
 
+## Backend (FastAPI)
+
+The backend only reads saved artifacts; it never trains. Install and run it from the repository
+root (`requirements-dev.txt` already includes the backend requirements):
+
+```bash
+pip install -e . -r backend/requirements.txt
+USE_EXAMPLE_ARTIFACTS=true uvicorn backend.app.main:app --reload   # PowerShell: $env:USE_EXAMPLE_ARTIFACTS="true"; uvicorn backend.app.main:app --reload
+```
+
+Open <http://localhost:8000/docs> for the interactive docs. Endpoints (under `/api/v1`):
+`GET /health`, `/models`, `/results`, `/eda`, `/presets`; shapes in `docs/contracts.md`.
+Without `USE_EXAMPLE_ARTIFACTS=true` it reads the real artifacts, and until they all exist
+`/health` reports `"degraded"` with one message per missing file and how to produce it.
+
+| variable | default | purpose |
+|----------|---------|---------|
+| `USE_EXAMPLE_ARTIFACTS` | `false` | serve `docs/contracts/examples/` (fake data, for frontend work); no model file is loaded |
+| `ARTIFACTS_DIR` | `artifacts` | `results/*.json` and `demo/presets.json` |
+| `MODELS_DIR` | `artifacts/models` | `manifest.json` and the model files it lists |
+| `EXAMPLES_DIR` | `docs/contracts/examples` | the example artifacts |
+| `ALLOWED_ORIGINS` | empty | comma-separated CORS origins (`http://localhost:5173` is added in development) |
+| `ENVIRONMENT` | `development` | `production` refuses `*`, an empty origin list and example artifacts |
+| `DEFAULT_MODEL_ID` | manifest's | override the default model (a manifest id) |
+| `MAX_UPLOAD_MB` / `MAX_BATCH_ROWS` | `5` / `10000` | upload limits (batch endpoint, later) |
+| `LOG_LEVEL` | `INFO` | log level of the `backend` loggers |
+| `RATE_LIMIT_ENABLED` | `true` | slowapi limits (applied to the prediction endpoints, later) |
+
+Relative paths resolve from the repository root. Variables may also go in a git-ignored `.env`
+file there. Logs never contain request bodies or feature values (uvicorn's own access log can be
+turned off with `--no-access-log`; the backend writes its own with the request id).
+
 Full setup (experiment, backend, dashboard) will be added as those parts land.
 
 ---

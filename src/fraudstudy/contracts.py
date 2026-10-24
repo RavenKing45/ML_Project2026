@@ -14,11 +14,19 @@ Conventions:
 * Probabilities, rates and areas are floats in [0, 1]; counts are non-negative ints.
 """
 
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Required
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    SerializerFunctionWrapHandler,
+    model_serializer,
+    model_validator,
+)
+from typing_extensions import TypedDict  # pydantic needs this one on Python < 3.12
 
-CONTRACT_VERSION = "1.4"
+CONTRACT_VERSION = "1.5"
 MAX_CURVE_POINTS = 101
 AMOUNT_MAX = 1_000_000.0
 
@@ -777,17 +785,140 @@ class BatchResponse(TopLevel):
     latency_ms: NonNegFloat
 
 
+class ErrorDetailBody(TypedDict, total=False):
+    """Serialised form of :class:`ErrorDetail` (documents its JSON schema; ``details`` optional)."""
+
+    code: Required[str]
+    message: Required[str]
+    details: Any
+
+
 class ErrorDetail(StrictModel):
-    """Machine-readable ``code`` (e.g. ``"unknown_model"``) and a human ``message``."""
+    """Machine-readable ``code`` (e.g. ``"unknown_model"``) and a human ``message``.
+
+    Since 1.5 (optional): ``details``, any JSON value with more context (e.g. the valid model
+    ids, or the field errors of a 422), ``null`` when there is nothing to add. The backend
+    always sends it. It is serialised only when it was given, so a 1.4 body without it
+    round-trips unchanged.
+    """
 
     code: str
     message: str
+    details: Any = None
+
+    @model_serializer(mode="wrap")
+    def _omit_unset_details(self, handler: SerializerFunctionWrapHandler) -> ErrorDetailBody:
+        data = handler(self)
+        if "details" not in self.model_fields_set:
+            data.pop("details", None)
+        return data
 
 
 class ErrorResponse(StrictModel):
-    """Body of every non-2xx API response: ``{"error": {"code": ..., "message": ...}}``."""
+    """Body of every non-2xx API response:
+    ``{"error": {"code": ..., "message": ..., "details": ...}}``."""
 
     error: ErrorDetail
+
+
+# --- GET endpoints of the backend (since 1.5) ---------------------------------------------------
+
+HealthStatus = Literal["ok", "degraded"]
+DefaultThreshold = Literal["f1", "f2"]
+
+
+class HealthResponse(TopLevel):
+    """``GET /api/v1/health``: is the backend up, and did every artifact load?
+
+    ``status`` is ``"degraded"`` exactly when ``problems`` is non-empty (validated); each problem
+    says what is wrong and how to fix it. ``models_loaded`` counts model files loaded from the
+    manifest (always 0 with the example artifacts, which have no model files).
+    ``default_model`` is the manifest id used when a request names none (``DEFAULT_MODEL_ID``
+    overrides the manifest's). ``data_sha256`` is the training data's hash from the manifest;
+    ``git_hash`` the backend's commit (``None`` outside a git checkout); ``uptime_s`` seconds
+    since start-up. ``is_example`` is true when the backend serves the example artifacts.
+    """
+
+    status: HealthStatus
+    problems: list[str]
+    models_loaded: NonNegInt
+    default_model: str | None
+    data_sha256: str | None
+    git_hash: str | None
+    version: str
+    uptime_s: NonNegFloat
+
+    @model_validator(mode="after")
+    def _status_matches_problems(self) -> "HealthResponse":
+        expected = "degraded" if self.problems else "ok"
+        if self.status != expected:
+            raise ValueError(f"status must be {expected!r} when problems has {len(self.problems)}.")
+        return self
+
+
+class ModelInfo(CellRef):
+    """One manifest model as ``GET /api/v1/models`` lists it.
+
+    ``loaded`` is true when the backend loaded its file at start-up (always false with the
+    example artifacts); only loaded models can score requests. ``default_threshold`` says which
+    tuned threshold applies when a request gives none. ``features`` is the pipeline's input
+    column order.
+    """
+
+    id: str
+    model_label: str
+    technique_label: str
+    threshold_f1: Unit
+    threshold_f2: Unit
+    default_threshold: DefaultThreshold
+    has_calibrator: bool
+    features: list[str]
+    loaded: bool
+
+    @model_validator(mode="after")
+    def _id_matches_cell(self) -> "ModelInfo":
+        expected = f"{self.model}__{self.technique}"
+        if self.id != expected:
+            raise ValueError(f"Model id must be '{expected}' for this cell; got '{self.id}'.")
+        return self
+
+
+class ModelsResponse(TopLevel):
+    """``GET /api/v1/models``: the deployed models and the default one (one of ``models``)."""
+
+    default_model_id: str | None
+    models: list[ModelInfo]
+
+    @model_validator(mode="after")
+    def _ids(self) -> "ModelsResponse":
+        ids = [m.id for m in self.models]
+        if len(ids) != len(set(ids)):
+            raise ValueError(f"Model ids must be unique; got {ids}.")
+        if self.default_model_id is not None and self.default_model_id not in ids:
+            raise ValueError(f"default_model_id '{self.default_model_id}' is not in {ids}.")
+        return self
+
+
+class ResultsResponse(TopLevel):
+    """``GET /api/v1/results``: ``comparison.json``, ``curves.json`` and ``stats.json`` as
+    written, plus ``temporal_check.json`` when present.
+
+    ``temporal_check`` is a labelled SENSITIVITY ANALYSIS, not the main result; its inner shape
+    is internal to ``fraudstudy.experiment.test_eval.temporal_check`` (not a contract) and it is
+    ``None`` when the check has not been run. ``is_example`` is true if any part is an example.
+    """
+
+    comparison: ComparisonTable
+    curves: CurvesFile
+    stats: StatsResult
+    temporal_check: dict[str, Any] | None = None
+
+
+class EdaResponse(TopLevel):
+    """``GET /api/v1/eda``: ``eda.json`` plus ``resampling_audit.json`` (``None`` if absent)."""
+
+    eda: EdaSummary
+    resampling_audit: ResamplingAudit | None = None
 
 
 # --- SMOTE demo ---------------------------------------------------------------------------------

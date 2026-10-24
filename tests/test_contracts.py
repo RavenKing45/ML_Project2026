@@ -249,3 +249,70 @@ def test_smote_demo_k_must_be_below_n_fraud() -> None:
 def test_examples_are_lf_utf8() -> None:
     for path in EXAMPLES_DIR.glob("*.json"):
         assert b"\r\n" not in path.read_bytes(), path.name
+
+
+# --- 1.5: error details and the backend's GET responses --------------------------------------
+
+
+@pytest.mark.parametrize("details", [None, ["lightgbm__smote"], {"loc": ["body"]}])
+def test_error_details_round_trip_when_given(details: Any) -> None:
+    body = {"error": {"code": "unknown_model", "message": "Unknown.", "details": details}}
+    assert c.ErrorResponse.model_validate(body).model_dump(mode="json") == body
+
+
+def _health(**overrides: Any) -> dict[str, Any]:
+    return {
+        "status": "ok",
+        "problems": [],
+        "models_loaded": 0,
+        "default_model": None,
+        "data_sha256": None,
+        "git_hash": None,
+        "version": "0.1.0",
+        "uptime_s": 1.5,
+    } | overrides
+
+
+def test_health_status_must_match_problems() -> None:
+    assert c.HealthResponse.model_validate(_health()).status == "ok"
+    assert c.HealthResponse.model_validate(_health(status="degraded", problems=["x"]))
+    with pytest.raises(ValidationError, match="status must be 'degraded'"):
+        c.HealthResponse.model_validate(_health(problems=["x"]))
+    with pytest.raises(ValidationError, match="status must be 'ok'"):
+        c.HealthResponse.model_validate(_health(status="degraded"))
+
+
+def _model_info(**overrides: Any) -> dict[str, Any]:
+    entry = _manifest_entry()
+    keep = ("id", "model", "technique", "threshold_f1", "threshold_f2", "has_calibrator")
+    return {key: entry[key] for key in keep} | {
+        "model_label": "LightGBM",
+        "technique_label": "A. Baseline (no resampling)",
+        "default_threshold": "f1",
+        "features": entry["features"],
+        "loaded": False,
+    } | overrides
+
+
+def test_models_response_checks_ids_and_default() -> None:
+    info = _model_info()
+    assert c.ModelsResponse(default_model_id=info["id"], models=[info]).models[0].loaded is False
+    with pytest.raises(ValidationError, match="Model id"):
+        c.ModelInfo.model_validate(_model_info(id="logreg__smote"))
+    with pytest.raises(ValidationError, match="default_model_id"):
+        c.ModelsResponse(default_model_id="logreg__rus", models=[info])
+    with pytest.raises(ValidationError, match="unique"):
+        c.ModelsResponse(default_model_id=None, models=[info, info])
+
+
+def test_results_and_eda_responses_wrap_the_example_files() -> None:
+    results = c.ResultsResponse(
+        comparison=_example("comparison"),
+        curves=_example("curves"),
+        stats=_example("stats"),
+    )
+    assert results.temporal_check is None
+    eda = c.EdaResponse(eda=_example("eda"))
+    assert eda.resampling_audit is None
+    with pytest.raises(ValidationError):
+        c.EdaResponse(eda=_example("eda") | {"n_rows": -1})

@@ -15,7 +15,7 @@ Changing a contract (renaming, removing or retyping a field) needs team agreemen
   (`Time`, `V1`..`V28`, `Amount`) so CSV rows map 1:1.
 * Every model rejects unknown fields (`extra="forbid"`), so a typo fails loudly, and rejects
   NaN / infinity.
-* Every top-level file or payload has `contract_version` (currently `"1.4"`) and `is_example`.
+* Every top-level file or payload has `contract_version` (currently `"1.5"`) and `is_example`.
   `is_example` is `true` only in the fixture files; the dashboard should show an
   "example data" banner when it sees `true`.
 * Probabilities, rates and areas are floats in [0, 1]; counts are non-negative integers;
@@ -38,14 +38,20 @@ Changing a contract (renaming, removing or retyping a field) needs team agreemen
 | resampling_audit.json | `ResamplingAudit` | `artifacts/results/` |
 | manifest.json | `Manifest` | `artifacts/models/` |
 | presets.json | `PresetsFile` | `artifacts/demo/` |
+| — (API) | `HealthResponse` | `GET /api/v1/health` |
+| — (API) | `ModelsResponse` | `GET /api/v1/models` |
+| — (API) | `ResultsResponse` | `GET /api/v1/results` |
+| — (API) | `EdaResponse` | `GET /api/v1/eda` |
+| — (API) | `PresetsFile` | `GET /api/v1/presets` |
 | — (API) | `PredictRequest` / `PredictResponse` | `POST /api/v1/predict` |
 | — (API) | `BatchResponse` | `POST /api/v1/predict/batch` (CSV upload) |
 | — (API) | `SmoteDemoRequest` / `SmoteDemoResponse` | `POST /api/v1/smote-demo` |
 | — (API) | `ErrorResponse` | body of every non-2xx response |
 
-`GET /api/v1/results` serves comparison + curves + stats; `GET /api/v1/eda` serves eda.json;
-`GET /api/v1/presets` serves presets.json. The `/health` and `/models` response shapes are left
-to the backend prompt.
+`GET /api/v1/results` serves comparison + curves + stats (+ the temporal check);
+`GET /api/v1/eda` serves eda.json (+ the resampling audit); `GET /api/v1/presets` serves
+presets.json unchanged. Their response shapes, and those of `/health` and `/models`, are in
+[GET endpoints](#get-endpoints-of-the-backend-15) below.
 
 Shared building blocks:
 
@@ -299,7 +305,54 @@ The backend must never log or store uploaded file contents.
 
 ## Errors — `ErrorResponse`
 
-Every non-2xx response body is `{"error": {"code": "<snake_case>", "message": "<human text>"}}`.
+Every non-2xx response body is
+`{"error": {"code": "<snake_case>", "message": "<human text>", "details": <any JSON or null>}}`.
+
+`details` *(1.5, optional)* carries context: the field errors of a 422 (`[{loc, msg, type}]`,
+never the submitted values), `{"artifacts": [...], "problems": [...]}` for a 503, the request id
+for a 500. The backend always sends it (`null` when there is nothing to add); a body without it
+(1.4) still validates. Codes the backend uses so far: `bad_request` (400), `not_found` (404),
+`method_not_allowed` (405), `payload_too_large` (413), `validation_error` (422), `rate_limited`
+(429), `internal_error` (500), `artifact_unavailable` and `service_unavailable` (503).
+
+## GET endpoints of the backend *(1.5)*
+
+* **Written by:** backend (`backend/app/routers/`), from the artifacts it loaded and validated
+  once at start-up. **Read by:** dashboard.
+* No example files: run the backend with `USE_EXAMPLE_ARTIFACTS=true` to serve these shapes
+  built from the examples above.
+
+`GET /api/v1/health` — `HealthResponse`. Always 200, also when degraded.
+
+| field | type | meaning |
+|-------|------|---------|
+| status | `"ok"` \| `"degraded"` | `"degraded"` exactly when `problems` is non-empty (validated) |
+| problems | str[] | what is wrong and how to fix it (missing / invalid artifact, model checksum or library-version mismatch, unknown default model, unsafe production settings) |
+| models_loaded | int | model files loaded from the manifest (0 with example artifacts) |
+| default_model | str \| null | manifest id used when a request names none (`DEFAULT_MODEL_ID` overrides the manifest) |
+| data_sha256 | str \| null | training data hash from the manifest |
+| git_hash | str \| null | the backend's commit (null outside a git checkout) |
+| version | str | backend version |
+| uptime_s | float | seconds since start-up |
+
+`GET /api/v1/models` — `ModelsResponse`: `default_model_id` (one of the ids, or null) and
+`models[]` (`ModelInfo`): `id`, `model`, `technique`, `model_label`, `technique_label`,
+`threshold_f1`, `threshold_f2`, `default_threshold` (`"f1"` \| `"f2"`), `has_calibrator`,
+`features` (input column order) and `loaded` (its file loaded at start-up, so it can score;
+always false with example artifacts). 503 if `manifest.json` is unavailable.
+
+`GET /api/v1/results` — `ResultsResponse`: `comparison` (`ComparisonTable`), `curves`
+(`CurvesFile`), `stats` (`StatsResult`) and `temporal_check` (`temporal_check.json` as written by
+`scripts/run_temporal_check.py`, a labelled sensitivity analysis whose inner shape is internal,
+or null). 503 if any of the first three is unavailable.
+
+`GET /api/v1/eda` — `EdaResponse`: `eda` (`EdaSummary`) and `resampling_audit`
+(`ResamplingAudit` or null). 503 if `eda.json` is unavailable.
+
+`GET /api/v1/presets` — `PresetsFile`, as written. 503 if `presets.json` is unavailable.
+
+The wrappers carry their own `contract_version`; their `is_example` is true if any part is an
+example.
 
 ## POST /api/v1/smote-demo — `SmoteDemoRequest` → `SmoteDemoResponse`
 
