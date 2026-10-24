@@ -1,0 +1,49 @@
+{
+  "contract_version": "1.0",
+  "is_example": true,
+  "model": {
+    "id": "lightgbm__smote_rus",
+    "model": "lightgbm",
+    "technique": "smote_rus"
+  },
+  "threshold": 0.25,
+  "threshold_source": "tuned_on_validation_F1",
+  "n_rows": 4,
+  "n_scored": 3,
+  "n_flagged": 1,
+  "flagged_fraction": 0.333,
+  "flagged_amount_total": 123.45,
+  "metrics": null,
+  "results": [
+    {
+      "row": 0,
+      "amount": 12.34,
+      "risk_score": 0.012,
+      "calibrated_probability": 0.001,
+      "label": "LEGITIMATE"
+    },
+    {
+      "row": 1,
+      "amount": 123.45,
+      "risk_score": 0.5,
+      "calibrated_probability": 0.123,
+      "label": "FRAUD"
+    },
+    {
+      "row": 3,
+      "amount": 1.0,
+      "risk_score": 0.123,
+      "calibrated_probability": 0.012,
+      "label": "LEGITIMATE"
+    }
+  ],
+  "errors": [
+    {
+      "row": 2,
+      "message": "Missing column V7."
+    }
+  ],
+  "warnings": [],
+  "disclaimer": "Research demo on anonymised public data. Not a real fraud decision.",
+  "latency_ms": 45.6
+}
