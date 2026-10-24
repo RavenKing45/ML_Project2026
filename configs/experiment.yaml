@@ -26,3 +26,4 @@ deploy:
   max_file_mb: 50           # warn above this per file (free server: 512 MB RAM)
   presets: {everyday_amount: [5, 50], small_amount_max: 5, large_amount_quantile: 0.99, borderline_window: 0.05}
   demo_batch: {rows: 500, frauds: 25}   # test rows; fraud share enriched (5% vs 0.17%), so batch precision is optimistic
+  input_range_percentiles: [0.1, 99.9]   # /predict warns when an input lies outside this percentile range of the training rows

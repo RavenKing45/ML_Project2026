@@ -165,6 +165,14 @@ def test_deploy_settings_reject_bad_input(
         deploy_settings(exp, default)
 
 
+def test_deploy_settings_check_the_input_range_percentiles(cfgs: Configs) -> None:
+    exp = copy.deepcopy(cfgs.experiment)
+    assert deploy_settings(exp, DEFAULT).input_range_percentiles == (0.1, 99.9)
+    exp["deploy"]["input_range_percentiles"] = [99.9, 0.1]
+    with pytest.raises(ConfigError, match="Range percentiles"):
+        deploy_settings(exp, DEFAULT)
+
+
 def test_deploy_block_is_required(cfgs: Configs) -> None:
     exp = {k: v for k, v in cfgs.experiment.items() if k != "deploy"}
     with pytest.raises(ConfigError, match="deploy"):
@@ -230,6 +238,18 @@ def test_feature_reference_explains_every_deployed_model(run: dict[str, Any]) ->
         c = compute_contributions(pipe, rows, reference)
         np.testing.assert_allclose(c.base + c.contributions.sum(axis=1), c.score, atol=1e-6)
         assert len(explain(pipe, rows.iloc[[0]], reference).top_features) == 8
+
+
+def test_feature_reference_has_training_ranges(run: dict[str, Any], cfgs: Configs) -> None:
+    reference = FeatureReference.model_validate(
+        load_json(run["out"].models / FEATURE_REFERENCE_FILE)
+    )
+    percentiles = tuple(cfgs.experiment["deploy"]["input_range_percentiles"])
+    assert reference.range_percentiles == percentiles
+    X_train = run["data"].X_train
+    for f in reference.features:
+        expected = np.percentile(X_train[f.raw_column].to_numpy(dtype=float), percentiles)
+        assert f.train_range == pytest.approx(tuple(expected))
 
 
 def test_report_lists_every_file_and_the_total_size(run: dict[str, Any]) -> None:

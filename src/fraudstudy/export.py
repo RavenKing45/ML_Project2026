@@ -11,7 +11,8 @@ their refitted pipelines (``<models>/cells``) and, on the raw source, the single
 * ``deploy/<id>.calibrator.joblib`` (optional): isotonic calibrator fitted on the cell's
   OUT-OF-FOLD training scores, never on test scores.
 * ``feature_reference.json`` (:class:`fraudstudy.explain.FeatureReference`): legitimate-row
-  quantiles and scaled training means, from TRAINING rows only.
+  quantiles, scaled training means and each raw column's ``deploy.input_range_percentiles``
+  range, from TRAINING rows only.
 * ``presets.json`` (``PresetsFile``) and ``demo_batch.csv``: real TEST-set rows, picked with the
   default cell's scores after the test evaluation. Picking them tunes nothing, but they are
   test rows, so on the raw source each export is recorded in the test-set guard (like the
@@ -64,7 +65,12 @@ from fraudstudy.experiment.test_eval import (
     open_test_set,
     output_dir_for,
 )
-from fraudstudy.explain import FeatureReference, build_feature_reference, feature_map
+from fraudstudy.explain import (
+    FeatureReference,
+    build_feature_reference,
+    check_range_percentiles,
+    feature_map,
+)
 from fraudstudy.io import git_commit_hash, load_json, save_json, sha256_file
 from fraudstudy.paths import resolve
 
@@ -97,6 +103,7 @@ DEPLOY_KEYS: tuple[str, ...] = (
     "max_file_mb",
     "presets",
     "demo_batch",
+    "input_range_percentiles",
 )
 PRESET_TEXT: dict[str, tuple[str, str]] = {
     "legit_everyday": ("Everyday purchase", "An everyday legitimate purchase."),
@@ -141,6 +148,8 @@ class DeploySettings:
         presets: :class:`PresetRules`.
         demo_batch_rows: Rows in ``demo_batch.csv``.
         demo_batch_frauds: Frauds among them (fewer if the test set has fewer).
+        input_range_percentiles: ``(low, high)`` percentiles of each raw column over the
+            training rows; the backend warns about inputs outside that range.
     """
 
     cells: list[str]
@@ -151,6 +160,7 @@ class DeploySettings:
     presets: PresetRules
     demo_batch_rows: int
     demo_batch_frauds: int
+    input_range_percentiles: tuple[float, float]
 
 
 @dataclass(frozen=True)
@@ -258,7 +268,9 @@ def deploy_settings(exp_cfg: dict[str, Any], default_cell: str | None = None) ->
         The :class:`DeploySettings`.
 
     Raises:
-        ConfigError: If the block is missing or invalid, or no default cell is given.
+        ConfigError: If the block is missing or invalid (including ``input_range_percentiles``
+            not being ``[low, high]`` with ``0 <= low < high <= 100``), or no default cell is
+            given.
     """
     block = exp_cfg.get("deploy")
     if not isinstance(block, dict) or not set(DEPLOY_KEYS) <= set(block):
@@ -312,6 +324,7 @@ def deploy_settings(exp_cfg: dict[str, Any], default_cell: str | None = None) ->
         ),
         demo_batch_rows=rows,
         demo_batch_frauds=frauds,
+        input_range_percentiles=check_range_percentiles(block["input_range_percentiles"]),
     )
 
 
@@ -675,6 +688,7 @@ def export_artifacts(
         source=source,
         data_sha256=first.data_sha256,
         train_sha256=data.train_sha256,
+        range_percentiles=settings.input_range_percentiles,
     )
     check_same_preprocessing(pipelines, reference, data.X_train)
 

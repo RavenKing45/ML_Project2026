@@ -43,7 +43,15 @@ USE_EXAMPLE_ARTIFACTS=true uvicorn backend.app.main:app --reload   # PowerShell:
 ```
 
 Open <http://localhost:8000/docs> for the interactive docs. Endpoints (under `/api/v1`):
-`GET /health`, `/models`, `/results`, `/eda`, `/presets`; shapes in `docs/contracts.md`.
+`GET /health`, `/models`, `/results`, `/eda`, `/presets`; `POST /predict` (one payment, with an
+explanation and every LightGBM technique's score), `POST /predict/batch` (a CSV in a `file` field;
+optional `?model_id=` and `?threshold=`) and `POST /smote-demo` (SMOTE step by step on a toy
+dataset); shapes and error rules in `docs/contracts.md`. The prediction endpoints need the
+exported models, so with example artifacts they answer 503; the SMOTE demo always works.
+
+```bash
+curl -F "file=@data/sample/demo_batch.csv" http://localhost:8000/api/v1/predict/batch   # after the export
+```
 Without `USE_EXAMPLE_ARTIFACTS=true` it reads the real artifacts, and until they all exist
 `/health` reports `"degraded"` with one message per missing file and how to produce it.
 
@@ -56,9 +64,9 @@ Without `USE_EXAMPLE_ARTIFACTS=true` it reads the real artifacts, and until they
 | `ALLOWED_ORIGINS` | empty | comma-separated CORS origins (`http://localhost:5173` is added in development) |
 | `ENVIRONMENT` | `development` | `production` refuses `*`, an empty origin list and example artifacts |
 | `DEFAULT_MODEL_ID` | manifest's | override the default model (a manifest id) |
-| `MAX_UPLOAD_MB` / `MAX_BATCH_ROWS` | `5` / `10000` | upload limits (batch endpoint, later) |
+| `MAX_UPLOAD_MB` / `MAX_BATCH_ROWS` | `5` / `10000` | upload limits of `POST /predict/batch` (413 above them) |
 | `LOG_LEVEL` | `INFO` | log level of the `backend` loggers |
-| `RATE_LIMIT_ENABLED` | `true` | slowapi limits (applied to the prediction endpoints, later) |
+| `RATE_LIMIT_ENABLED` | `true` | slowapi limits per client: 60/min `/predict`, 10/min `/predict/batch`, 30/min `/smote-demo` |
 
 Relative paths resolve from the repository root. Variables may also go in a git-ignored `.env`
 file there. Logs never contain request bodies or feature values (uvicorn's own access log can be

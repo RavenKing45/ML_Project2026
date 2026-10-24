@@ -39,8 +39,8 @@ class Settings(BaseSettings):
         environment: ``development`` also allows the Vite dev server; ``production`` refuses
             ``*`` and example artifacts.
         default_model_id: Overrides the manifest's ``default_model_id`` (a manifest id).
-        max_upload_mb: Largest CSV upload, in MB (batch endpoint, a later prompt).
-        max_batch_rows: Most rows in one CSV upload.
+        max_upload_mb: Largest CSV upload of ``POST /predict/batch``, in MB.
+        max_batch_rows: Most data rows in one CSV upload.
         log_level: Python logging level of the ``backend`` loggers.
         rate_limit_enabled: Turns every slowapi limit on or off.
     """

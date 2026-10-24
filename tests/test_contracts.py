@@ -316,3 +316,73 @@ def test_results_and_eda_responses_wrap_the_example_files() -> None:
     assert eda.resampling_audit is None
     with pytest.raises(ValidationError):
         c.EdaResponse(eda=_example("eda") | {"n_rows": -1})
+
+
+# --- contract 1.6: prediction and SMOTE-demo fields ---------------------------------------------
+
+
+def test_1_6_fields_are_optional_so_1_5_payloads_still_validate() -> None:
+    predict = _example("predict_response")
+    del predict["technique_scores"]
+    assert c.PredictResponse.model_validate(predict).technique_scores == []
+    batch = _example("batch_response")
+    for row in batch["results"]:
+        del row["true_class"]
+    assert all(r.true_class is None for r in c.BatchResponse.model_validate(batch).results)
+    demo = _example("smote_demo")
+    for key in ("fraud_neighbors", "decision_grid"):
+        del demo[key]
+    del demo["request"]["oversample_percent"]
+    parsed = c.SmoteDemoResponse.model_validate(demo)
+    assert parsed.fraud_neighbors == [] and parsed.decision_grid is None
+    assert parsed.request.oversample_percent is None
+    req = c.PredictRequest.model_validate({"features": _features()})
+    assert req.input_source is None
+
+
+@pytest.mark.parametrize("source", ["preset", "edited", "manual"])
+def test_predict_request_input_sources(source: str) -> None:
+    req = c.PredictRequest.model_validate({"features": _features(), "input_source": source})
+    assert req.input_source == source
+
+
+def test_predict_request_rejects_an_unknown_input_source() -> None:
+    with pytest.raises(ValidationError, match="input_source"):
+        c.PredictRequest.model_validate({"features": _features(), "input_source": "pasted"})
+
+
+def test_technique_score_label_must_match_its_threshold() -> None:
+    score = {"id": "lightgbm__ros", "model": "lightgbm", "technique": "ros", "threshold": 0.5}
+    assert c.TechniqueScore(**score, risk_score=0.5, label="FRAUD").label == "FRAUD"
+    with pytest.raises(ValidationError, match="label must be LEGITIMATE"):
+        c.TechniqueScore(**score, risk_score=0.4, label="FRAUD")
+
+
+@pytest.mark.parametrize("percent", [100, 200, 300, 400, 500])
+def test_oversample_percent_accepts_steps_of_100(percent: int) -> None:
+    assert c.SmoteDemoRequest(oversample_percent=percent).oversample_percent == percent
+
+
+@pytest.mark.parametrize("percent", [0, 50, 150, 600])
+def test_oversample_percent_rejects_other_values(percent: int) -> None:
+    with pytest.raises(ValidationError, match="oversample_percent"):
+        c.SmoteDemoRequest(oversample_percent=percent)
+
+
+def test_decision_grid_shape_is_checked() -> None:
+    grid = {"model": "tree", "x": [0.0, 1.0], "y": [0.0, 1.0, 2.0]}
+    ok = c.DecisionGrid(**grid, before=[[0, 1]] * 3, after=[[1, 1]] * 3)
+    assert len(ok.before) == 3
+    with pytest.raises(ValidationError, match="before must have"):
+        c.DecisionGrid(**grid, before=[[0, 1]] * 2, after=[[1, 1]] * 3)
+    with pytest.raises(ValidationError, match="after must have"):
+        c.DecisionGrid(**grid, before=[[0, 1]] * 3, after=[[1, 1, 1]] * 3)
+    with pytest.raises(ValidationError):
+        c.DecisionGrid(**grid, before=[[0, 2]] * 3, after=[[1, 1]] * 3)
+
+
+def test_batch_row_true_class_is_0_or_1() -> None:
+    row = _example("batch_response")["results"][0] | {"true_class": 1}
+    assert c.BatchRowResult.model_validate(row).true_class == 1
+    with pytest.raises(ValidationError, match="true_class"):
+        c.BatchRowResult.model_validate(row | {"true_class": 2})

@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.5",
+  "contract_version": "1.6",
   "is_example": true,
   "model": {
     "id": "lightgbm__smote_rus",
@@ -20,21 +20,24 @@
       "amount": 12.34,
       "risk_score": 0.012,
       "calibrated_probability": 0.001,
-      "label": "LEGITIMATE"
+      "label": "LEGITIMATE",
+      "true_class": null
     },
     {
       "row": 1,
       "amount": 123.45,
       "risk_score": 0.5,
       "calibrated_probability": 0.123,
-      "label": "FRAUD"
+      "label": "FRAUD",
+      "true_class": null
     },
     {
       "row": 3,
       "amount": 1.0,
       "risk_score": 0.123,
       "calibrated_probability": 0.012,
-      "label": "LEGITIMATE"
+      "label": "LEGITIMATE",
+      "true_class": null
     }
   ],
   "errors": [

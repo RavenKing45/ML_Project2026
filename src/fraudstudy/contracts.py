@@ -26,7 +26,7 @@ from pydantic import (
 )
 from typing_extensions import TypedDict  # pydantic needs this one on Python < 3.12
 
-CONTRACT_VERSION = "1.5"
+CONTRACT_VERSION = "1.6"
 MAX_CURVE_POINTS = 101
 AMOUNT_MAX = 1_000_000.0
 
@@ -36,6 +36,7 @@ ThresholdSource = Literal[
     "tuned_on_validation_F1", "tuned_on_validation_F2", "user_supplied", "default_0_5"
 ]
 PredictedLabel = Literal["FRAUD", "LEGITIMATE"]
+InputSource = Literal["preset", "edited", "manual"]
 DatasetSource = Literal["real", "synthetic"]
 
 MODEL_LABELS: dict[str, str] = {
@@ -78,6 +79,14 @@ def _check_interval(name: str, interval: tuple[float, float] | None) -> None:
     """Raise ``ValueError`` if ``interval`` is not ``[low, high]`` with ``low <= high``."""
     if interval is not None and interval[0] > interval[1]:
         raise ValueError(f"{name} must be [low, high] with low <= high; got {list(interval)}.")
+
+
+def _check_label(label: str, risk_score: float, threshold: float) -> None:
+    """Raise ``ValueError`` unless ``label`` is ``"FRAUD"`` exactly when
+    ``risk_score >= threshold``."""
+    expected = "FRAUD" if risk_score >= threshold else "LEGITIMATE"
+    if label != expected:
+        raise ValueError(f"label must be {expected} for risk_score/threshold given.")
 
 
 def _check_unique_cells(cells: list[Any], what: str) -> None:
@@ -713,11 +722,37 @@ class PredictRequest(StrictModel):
     """``POST /api/v1/predict`` body.
 
     ``model_id=None`` selects the default model; ``threshold=None`` uses its tuned threshold.
+
+    Since 1.6 (optional): ``input_source`` says where the features came from: ``"preset"`` (an
+    unchanged demo preset), ``"edited"`` (a preset with edited values) or ``"manual"`` (typed or
+    pasted). Edited and manual inputs get a warning that they may not resemble real payments.
     """
 
     features: Transaction
     model_id: str | None = None
     threshold: Unit | None = None
+    input_source: InputSource | None = None
+
+
+class TechniqueScore(StrictModel):
+    """The same payment scored by one deployed model of the technique comparison (since 1.6).
+
+    Each model applies its OWN tuned default threshold (a user-supplied threshold is not reused:
+    resampling shifts score scales, so one cut-off would not compare techniques fairly).
+    ``label`` is ``"FRAUD"`` exactly when ``risk_score >= threshold``.
+    """
+
+    id: str
+    model: ModelId
+    technique: TechniqueId
+    risk_score: Unit
+    threshold: Unit
+    label: PredictedLabel
+
+    @model_validator(mode="after")
+    def _label_consistent(self) -> "TechniqueScore":
+        _check_label(self.label, self.risk_score, self.threshold)
+        return self
 
 
 class PredictResponse(TopLevel):
@@ -725,6 +760,9 @@ class PredictResponse(TopLevel):
 
     ``label`` is ``"FRAUD"`` exactly when ``risk_score >= threshold``. ``risk_score`` is a ranking
     score, not a probability; ``calibrated_probability`` is ``None`` without a calibrator.
+
+    Since 1.6 (optional): ``technique_scores``, the same payment scored by every deployed LightGBM
+    technique, each at its own tuned threshold (:class:`TechniqueScore`).
     """
 
     label: PredictedLabel
@@ -737,23 +775,26 @@ class PredictResponse(TopLevel):
     warnings: list[str]
     disclaimer: str
     latency_ms: NonNegFloat
+    technique_scores: list[TechniqueScore] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _label_consistent(self) -> "PredictResponse":
-        expected = "FRAUD" if self.risk_score >= self.threshold else "LEGITIMATE"
-        if self.label != expected:
-            raise ValueError(f"label must be {expected} for risk_score/threshold given.")
+        _check_label(self.label, self.risk_score, self.threshold)
         return self
 
 
 class BatchRowResult(StrictModel):
-    """Score for one row of an uploaded CSV (``row`` is 0-based, header excluded)."""
+    """Score for one row of an uploaded CSV (``row`` is 0-based, header excluded).
+
+    Since 1.6 (optional): ``true_class``, the row's ``Class`` when the CSV had that column.
+    """
 
     row: NonNegInt
     amount: NonNegFloat
     risk_score: Unit
     calibrated_probability: Unit | None
     label: PredictedLabel
+    true_class: Literal[0, 1] | None = None
 
 
 class BatchRowError(StrictModel):
@@ -925,7 +966,12 @@ class EdaResponse(TopLevel):
 
 
 class SmoteDemoRequest(StrictModel):
-    """``POST /api/v1/smote-demo`` body: a small 2-D toy dataset to resample."""
+    """``POST /api/v1/smote-demo`` body: a small 2-D toy dataset to resample.
+
+    Since 1.6 (optional): ``oversample_percent`` (100-500 in steps of 100), the SMOTE paper's
+    "N%": ``n_fraud * oversample_percent / 100`` synthetic points. When given, it replaces
+    ``sampling_strategy`` (imblearn's target ``fraud / legit`` ratio), which is then ignored.
+    """
 
     scenario: Literal["single_cluster", "two_clusters", "overlap"] = "two_clusters"
     n_legit: Annotated[int, Field(ge=2, le=2000)] = 300
@@ -933,6 +979,7 @@ class SmoteDemoRequest(StrictModel):
     k_neighbors: Annotated[int, Field(ge=1, le=15)] = 5
     sampling_strategy: Annotated[float, Field(gt=0.0, le=1.0)] = 0.5
     seed: int = 42
+    oversample_percent: Annotated[int, Field(ge=100, le=500, multiple_of=100)] | None = None
 
     @model_validator(mode="after")
     def _enough_neighbours(self) -> "SmoteDemoRequest":
@@ -963,14 +1010,50 @@ class SyntheticPoint(StrictModel):
     in_legit_region: bool
 
 
+class FraudNeighbors(StrictModel):
+    """The ``k_neighbors`` nearest other fraud points of one fraud point (nearest first), as
+    indices into ``original`` (the nearest hit, the point itself, is dropped, as in imblearn)."""
+
+    point: NonNegInt
+    neighbors: list[NonNegInt]
+
+
+class DecisionGrid(StrictModel):
+    """Predicted labels of a small classifier on a regular grid over the toy data, trained on the
+    original points (``before``) and on original plus synthetic points (``after``).
+
+    ``before[i][j]`` and ``after[i][j]`` are the labels at ``(x[j], y[i])``; ``model`` names the
+    classifier, e.g. ``"DecisionTreeClassifier(max_depth=4)"``.
+    """
+
+    model: str
+    x: list[float]
+    y: list[float]
+    before: list[list[Literal[0, 1]]]
+    after: list[list[Literal[0, 1]]]
+
+    @model_validator(mode="after")
+    def _shape(self) -> "DecisionGrid":
+        for name, grid in (("before", self.before), ("after", self.after)):
+            if len(grid) != len(self.y) or any(len(row) != len(self.x) for row in grid):
+                raise ValueError(f"DecisionGrid.{name} must have len(y) rows of len(x) labels.")
+        return self
+
+
 class SmoteDemoResponse(TopLevel):
-    """``POST /api/v1/smote-demo`` response; echoes the request."""
+    """``POST /api/v1/smote-demo`` response; echoes the request.
+
+    Since 1.6 (optional): ``fraud_neighbors`` (one entry per fraud point of ``original``) and
+    ``decision_grid`` (a decision boundary before and after oversampling).
+    """
 
     request: SmoteDemoRequest
     original: list[Point2D]
     synthetic: list[SyntheticPoint]
     n_synthetic_in_legit_region: NonNegInt
     warnings: list[str]
+    fraud_neighbors: list[FraudNeighbors] = Field(default_factory=list)
+    decision_grid: DecisionGrid | None = None
 
 
 # --- registry -----------------------------------------------------------------------------------

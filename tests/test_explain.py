@@ -23,6 +23,7 @@ from fraudstudy.explain import (
     UNITS,
     FeatureReference,
     build_feature_reference,
+    check_range_percentiles,
     compute_contributions,
     explain,
     feature_map,
@@ -221,3 +222,48 @@ def test_explain_input_errors(fitted: Fitted) -> None:
     short = ref.model_copy(update={"features": ref.features[:-1]})
     with pytest.raises(DataValidationError, match="feature_reference.json"):
         explain(fitted.logreg, fitted.X_test.iloc[[0]], short)
+
+
+# --- training ranges (the backend's out-of-range warnings) ---------------------------------------
+
+RANGE = (0.1, 99.9)
+
+
+def test_reference_ranges_are_percentiles_of_all_training_rows(fitted: Fitted) -> None:
+    assert fitted.reference.range_percentiles is None
+    assert all(f.train_range is None for f in fitted.reference.features)
+    reference = build_feature_reference(
+        fitted.logreg.named_steps["preprocess"],
+        fitted.X_train,
+        fitted.y_train,
+        source="sample",
+        data_sha256=None,
+        train_sha256="x",
+        range_percentiles=list(RANGE),
+    )
+    assert reference.range_percentiles == RANGE
+    for f in reference.features:
+        expected = np.percentile(fitted.X_train[f.raw_column].to_numpy(dtype=float), RANGE)
+        assert f.train_range == pytest.approx(tuple(expected))
+    legit_only = fitted.X_train.loc[fitted.y_train.to_numpy() == 0, "V14"]
+    v14 = next(f for f in reference.features if f.raw_column == "V14")
+    assert v14.train_range is not None and v14.train_range[0] < legit_only.quantile(0.001)
+
+
+@pytest.mark.parametrize("bad", [[99.9, 0.1], [0.0, 100.5], [-1.0, 50.0], [5.0], [1.0, 1.0]])
+def test_range_percentiles_are_checked(bad: list[float]) -> None:
+    with pytest.raises(ConfigError, match="Range percentiles"):
+        check_range_percentiles(bad)
+
+
+def test_check_range_percentiles_returns_floats() -> None:
+    assert check_range_percentiles([0, 100]) == (0.0, 100.0)
+
+
+def test_reference_ranges_are_set_together(fitted: Fitted) -> None:
+    data = fitted.reference.model_dump()
+    with pytest.raises(ValueError, match="together"):
+        FeatureReference.model_validate(data | {"range_percentiles": RANGE})
+    data["features"][0]["train_range"] = (2.0, 1.0)
+    with pytest.raises(ValueError, match="low <= high"):
+        FeatureReference.model_validate(data)

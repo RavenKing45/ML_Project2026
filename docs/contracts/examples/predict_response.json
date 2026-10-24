@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.5",
+  "contract_version": "1.6",
   "is_example": true,
   "label": "FRAUD",
   "risk_score": 0.5,
@@ -39,5 +39,55 @@
     "Example warning: Time is ignored by the model."
   ],
   "disclaimer": "Research demo on anonymised public data. Not a real fraud decision.",
-  "latency_ms": 12.3
+  "latency_ms": 12.3,
+  "technique_scores": [
+    {
+      "id": "lightgbm__baseline",
+      "model": "lightgbm",
+      "technique": "baseline",
+      "risk_score": 0.12,
+      "threshold": 0.3,
+      "label": "LEGITIMATE"
+    },
+    {
+      "id": "lightgbm__ros",
+      "model": "lightgbm",
+      "technique": "ros",
+      "risk_score": 0.31,
+      "threshold": 0.4,
+      "label": "LEGITIMATE"
+    },
+    {
+      "id": "lightgbm__rus",
+      "model": "lightgbm",
+      "technique": "rus",
+      "risk_score": 0.97,
+      "threshold": 0.9,
+      "label": "FRAUD"
+    },
+    {
+      "id": "lightgbm__smote",
+      "model": "lightgbm",
+      "technique": "smote",
+      "risk_score": 0.42,
+      "threshold": 0.35,
+      "label": "FRAUD"
+    },
+    {
+      "id": "lightgbm__smote_rus",
+      "model": "lightgbm",
+      "technique": "smote_rus",
+      "risk_score": 0.5,
+      "threshold": 0.25,
+      "label": "FRAUD"
+    },
+    {
+      "id": "lightgbm__class_weight",
+      "model": "lightgbm",
+      "technique": "class_weight",
+      "risk_score": 0.2,
+      "threshold": 0.45,
+      "label": "LEGITIMATE"
+    }
+  ]
 }

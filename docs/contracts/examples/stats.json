@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.5",
+  "contract_version": "1.6",
   "is_example": true,
   "alpha": 0.05,
   "correction": "holm",

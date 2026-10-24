@@ -7,7 +7,9 @@ Run from the repository root::
 Start-up loads and validates every artifact once (:func:`load_artifacts`); it never crashes,
 it reports problems in ``GET /api/v1/health``. Endpoints live under ``/api/v1``; the interactive
 docs are at ``/docs``. Middleware, outermost first: CORS, then request id / timing / access log
-(:class:`RequestContextMiddleware`). The backend reads artifacts only; it never trains models.
+(:class:`RequestContextMiddleware`). The POST endpoints (predict, batch, SMOTE demo) are
+rate-limited by slowapi (:mod:`backend.app.ratelimit`). The backend reads artifacts only; it
+never trains models.
 """
 
 import logging
@@ -22,7 +24,7 @@ from backend.app.errors import install_error_handlers
 from backend.app.logging import LOGGER_NAME, configure_logging
 from backend.app.middleware import REQUEST_ID_HEADER, TIMING_HEADER, RequestContextMiddleware
 from backend.app.ratelimit import configure_rate_limiting
-from backend.app.routers import eda, health, models, presets, results
+from backend.app.routers import demo, eda, health, models, predict, presets, results
 from backend.app.services.artifacts import load_artifacts
 from backend.app.settings import Settings, get_settings
 
@@ -93,7 +95,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allow_credentials=False,
         max_age=CORS_MAX_AGE_S,
     )
-    for module in (health, models, results, eda, presets):
+    for module in (health, models, results, eda, presets, predict, demo):
         app.include_router(module.router, prefix=API_PREFIX)
     return app
 

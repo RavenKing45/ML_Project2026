@@ -18,6 +18,9 @@ answers 503 with the error shape.
 Required artifacts: comparison, curves, stats (``/results``), eda (``/eda``), presets
 (``/presets``) and manifest (``/models``). Optional: resampling_audit (in ``/eda``) and
 temporal_check (in ``/results``); a missing optional file is not a problem, an invalid one is.
+With the real source, ``MODELS_DIR/feature_reference.json`` (explanations and range warnings of
+``/predict``; an internal file of :mod:`fraudstudy.explain`, not a contract) follows the same
+optional rule; one without training ranges is a problem, because it predates them.
 """
 
 import json
@@ -47,7 +50,8 @@ from fraudstudy.contracts import (
     TopLevel,
 )
 from fraudstudy.experiment.runner import library_versions
-from fraudstudy.export import PICKLE_LIBRARIES
+from fraudstudy.explain import FeatureReference
+from fraudstudy.export import FEATURE_REFERENCE_FILE, PICKLE_LIBRARIES
 from fraudstudy.io import git_commit_hash, sha256_file
 from fraudstudy.paths import PROJECT_ROOT
 
@@ -88,6 +92,10 @@ PRODUCERS: dict[str, str] = {
 }
 TEMPORAL_ANALYSIS = "temporal_split_sensitivity_check"
 MAX_REPORTED_ERRORS = 3
+# Threads per prediction. One row gains nothing from threads, and every request thread that calls
+# LightGBM with n_jobs > 1 keeps its own OpenMP team of worker threads alive; more OpenMP threads
+# than CPUs make every OpenMP computation in the process (training included) far slower.
+PREDICT_N_JOBS = 1
 Source = Literal["real", "examples"]
 
 
@@ -115,6 +123,8 @@ class ArtifactStore:
         comparison, curves, stats, eda, resampling_audit, presets, manifest: Validated
             contracts, or ``None`` when unavailable.
         temporal_check: ``temporal_check.json`` as written (no contract), or ``None``.
+        feature_reference: ``MODELS_DIR/feature_reference.json``, or ``None`` (examples, or not
+            exported: predictions then carry no explanation).
         models: Loaded models by manifest id (empty with example artifacts).
         default_model_id: Model used when a request names none, or ``None``.
         problems: Messages saying what is wrong and how to fix it.
@@ -132,6 +142,7 @@ class ArtifactStore:
     presets: PresetsFile | None = None
     manifest: Manifest | None = None
     temporal_check: dict[str, Any] | None = None
+    feature_reference: FeatureReference | None = None
     models: dict[str, LoadedModel] = field(default_factory=dict)
     default_model_id: str | None = None
     problems: list[str] = field(default_factory=list)
@@ -302,6 +313,39 @@ def load_json_artifacts(
     return loaded, unavailable
 
 
+def load_feature_reference(models_dir: Path) -> tuple[FeatureReference | None, list[str]]:
+    """Read and validate ``MODELS_DIR/feature_reference.json``; never raises.
+
+    Args:
+        models_dir: ``MODELS_DIR``.
+
+    Returns:
+        ``(reference or None, problems)``. A missing file is not a problem (each prediction then
+        says it has no explanation); an unreadable or invalid file is, and so is a valid one
+        without training ranges (exported before contract 1.6), which is still returned.
+    """
+    path = models_dir / FEATURE_REFERENCE_FILE
+    where = display_path(path)
+    fix = "re-run scripts/export_artifacts.py"
+    if not path.is_file():
+        return None, []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"), parse_constant=_reject_constant)
+        reference = FeatureReference.model_validate(data)
+    except (OSError, UnicodeDecodeError, ValueError) as exc:  # JSONDecodeError is a ValueError
+        reason = _first_errors(exc) if isinstance(exc, ValidationError) else type(exc).__name__
+        return None, [
+            f"{where} could not be used ({reason}); {fix}. Predictions are served without "
+            "explanations or range warnings."
+        ]
+    if reference.range_percentiles is None:
+        return reference, [
+            f"{where} has no training ranges, so /predict cannot warn about values outside the "
+            f"range seen in training; {fix}."
+        ]
+    return reference, []
+
+
 def version_mismatches(recorded: dict[str, str], current: dict[str, str]) -> list[str]:
     """Pickle libraries (:data:`fraudstudy.export.PICKLE_LIBRARIES`) whose version differs.
 
@@ -358,6 +402,26 @@ def load_checked_file(models_dir: Path, relative: str, sha256: str, what: str) -
         ) from exc
 
 
+def single_threaded(pipeline: Any) -> Any:
+    """Set ``n_jobs = PREDICT_N_JOBS`` on every step that has it (LightGBM, logistic regression,
+    the ``ColumnTransformer``, a random forest).
+
+    ``n_jobs`` only changes how many threads compute a prediction, never its value.
+
+    Args:
+        pipeline: A loaded pipeline, or a bare estimator.
+
+    Returns:
+        ``pipeline``, changed in place.
+    """
+    steps = [step for _, step in getattr(pipeline, "steps", [])] or [pipeline]
+    for step in steps:
+        get_params = getattr(step, "get_params", None)
+        if callable(get_params) and "n_jobs" in get_params(deep=False):
+            step.set_params(n_jobs=PREDICT_N_JOBS)
+    return pipeline
+
+
 def load_model(
     entry: ManifestEntry, models_dir: Path, current: dict[str, str]
 ) -> tuple[LoadedModel | None, list[str]]:
@@ -365,7 +429,8 @@ def load_model(
 
     A model is not loaded when its library versions differ, its file is missing, changed or
     unloadable, or it has no ``predict_proba``. A calibrator that fails is a problem, but the
-    model is still served (without calibrated probabilities).
+    model is still served (without calibrated probabilities). Loaded models predict
+    single-threaded (:func:`single_threaded`).
 
     Args:
         entry: The manifest entry.
@@ -391,6 +456,7 @@ def load_model(
             f"Model {entry.id}: {entry.file} has no predict_proba, so it is not a fitted "
             "classification pipeline; re-export it. It is not loaded."
         ]
+    single_threaded(pipeline)
     problems: list[str] = []
     calibrator = None
     if entry.calibrator_file is not None and entry.calibrator_sha256 is not None:
@@ -469,8 +535,9 @@ def load_artifacts(settings: Settings) -> ArtifactStore:
     """Load and check everything the API serves; never raises.
 
     Steps: settings problems (:meth:`Settings.config_problems`) -> JSON artifacts
-    (:func:`load_json_artifacts`) -> models (real source only; :func:`load_models`) -> default
-    model (:func:`resolve_default_model`) -> git hash.
+    (:func:`load_json_artifacts`) -> models and feature reference (real source only;
+    :func:`load_models`, :func:`load_feature_reference`) -> default model
+    (:func:`resolve_default_model`) -> git hash.
 
     Args:
         settings: The backend settings.
@@ -492,6 +559,10 @@ def load_artifacts(settings: Settings) -> ArtifactStore:
                 store.models, model_problems = load_models(store.manifest, settings.models_dir)
                 store.problems += model_problems
                 loaded_ids = list(store.models)
+                store.feature_reference, reference_problems = load_feature_reference(
+                    settings.models_dir
+                )
+                store.problems += reference_problems
             store.default_model_id, default_problems = resolve_default_model(
                 store.manifest, settings.default_model_id, loaded_ids
             )

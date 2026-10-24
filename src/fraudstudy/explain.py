@@ -15,6 +15,8 @@ Only ``pipeline.named_steps["preprocess"]`` transforms the row; the samplers nev
 
 "How unusual" is the percentile of the raw input value among LEGITIMATE training rows, read
 from a :class:`FeatureReference` (101 quantiles per model feature, written by the exporter).
+The reference may also hold each raw column's central range over ALL training rows (e.g. the
+0.1th-99.9th percentiles), which the backend uses to warn about values the model rarely saw.
 Contributions say what the model used, not what caused a fraud.
 """
 
@@ -33,6 +35,7 @@ from fraudstudy.contracts import Explanation, FeatureContribution, StrictModel
 from fraudstudy.errors import ConfigError, DataValidationError
 
 N_QUANTILES = 101
+PERCENT_MIN = 0.0
 PERCENT_MAX = 100.0
 DEFAULT_TOP_K = 8
 UNITS = "log-odds"
@@ -48,12 +51,15 @@ class ReferenceFeature(StrictModel):
     ``legit_quantiles[k]`` is the k-th percentile (k = 0..100) of ``raw_column`` over the
     legitimate training rows, in raw units. ``train_mean_scaled`` is the mean of the feature over
     all training rows in scaled units (the centring point of logistic-regression contributions).
+    ``train_range`` (optional) is ``[low, high]``: the reference's ``range_percentiles`` of
+    ``raw_column`` over ALL training rows, in raw units.
     """
 
     feature: str
     raw_column: str
     legit_quantiles: list[float]
     train_mean_scaled: float
+    train_range: tuple[float, float] | None = None
 
     @model_validator(mode="after")
     def _quantiles(self) -> "ReferenceFeature":
@@ -62,6 +68,8 @@ class ReferenceFeature(StrictModel):
             raise ValueError(f"{self.feature}: need {N_QUANTILES} quantiles; got {len(q)}.")
         if any(b < a for a, b in zip(q, q[1:], strict=False)):
             raise ValueError(f"{self.feature}: quantiles must be non-decreasing.")
+        if self.train_range is not None and self.train_range[0] > self.train_range[1]:
+            raise ValueError(f"{self.feature}: train_range must be [low, high] with low <= high.")
         return self
 
 
@@ -69,7 +77,8 @@ class FeatureReference(StrictModel):
     """``feature_reference.json``: per-feature reference data, from TRAINING rows only.
 
     Written by :mod:`fraudstudy.export`, read by :func:`explain`. ``features`` follows the
-    preprocessor's output order.
+    preprocessor's output order. ``range_percentiles`` (optional) are the percentiles behind every
+    feature's ``train_range``; both are set together or not at all.
     """
 
     created_at: str
@@ -79,13 +88,37 @@ class FeatureReference(StrictModel):
     n_train: int
     n_legit: int
     features: list[ReferenceFeature]
+    range_percentiles: tuple[float, float] | None = None
 
     @model_validator(mode="after")
     def _unique(self) -> "FeatureReference":
         names = [f.feature for f in self.features]
         if len(names) != len(set(names)):
             raise ValueError(f"Reference features must be unique; got {names}.")
+        with_range = {f.train_range is not None for f in self.features}
+        if with_range - {self.range_percentiles is not None}:
+            raise ValueError("Set range_percentiles and every feature's train_range together.")
         return self
+
+
+def check_range_percentiles(percentiles: Sequence[float]) -> tuple[float, float]:
+    """Validate a ``[low, high]`` percentile pair.
+
+    Args:
+        percentiles: Two numbers, e.g. ``[0.1, 99.9]``.
+
+    Returns:
+        ``(low, high)`` as floats.
+
+    Raises:
+        ConfigError: Unless there are two of them with ``0 <= low < high <= 100``.
+    """
+    values = [float(p) for p in percentiles]
+    if len(values) != 2 or not PERCENT_MIN <= values[0] < values[1] <= PERCENT_MAX:
+        raise ConfigError(
+            f"Range percentiles must be [low, high] with 0 <= low < high <= 100; got {values}."
+        )
+    return values[0], values[1]
 
 
 @dataclass(frozen=True)
@@ -162,12 +195,14 @@ def build_feature_reference(
     source: str,
     data_sha256: str | None,
     train_sha256: str,
+    range_percentiles: Sequence[float] | None = None,
 ) -> FeatureReference:
     """Build the reference from TRAINING rows (never test rows).
 
     For each model feature: ``np.quantile`` at 0, 0.01, ..., 1 (linear interpolation) of its raw
     column over the legitimate training rows, and the mean over all training rows of
-    ``preprocess.transform(X_train)``.
+    ``preprocess.transform(X_train)``. With ``range_percentiles = [p_low, p_high]``, also
+    ``train_range = np.percentile(raw column over ALL training rows, [p_low, p_high])``.
 
     Args:
         preprocess: The fitted preprocessor of a deployed pipeline.
@@ -176,13 +211,17 @@ def build_feature_reference(
         source: ``"raw"`` or ``"sample"``.
         data_sha256: SHA-256 of the dataset file.
         train_sha256: Hash of the training rows (``training_sha256``).
+        range_percentiles: ``[low, high]`` percentiles for ``train_range`` (e.g. ``deploy.
+            input_range_percentiles`` in experiment.yaml), or ``None`` for no ranges.
 
     Returns:
         The :class:`FeatureReference`.
 
     Raises:
+        ConfigError: If ``range_percentiles`` is not a valid ``[low, high]`` pair.
         DataValidationError: If there are no legitimate rows or the sizes disagree.
     """
+    percentiles = None if range_percentiles is None else check_range_percentiles(range_percentiles)
     labels = np.asarray(y_train)
     if len(labels) != len(X_train):
         raise DataValidationError(f"X_train has {len(X_train)} rows but y_train {len(labels)}.")
@@ -198,6 +237,9 @@ def build_feature_reference(
             raw_column=column,
             legit_quantiles=np.quantile(legit[column].to_numpy(dtype=float), levels).tolist(),
             train_mean_scaled=float(scaled_mean[j]),
+            train_range=None
+            if percentiles is None
+            else _percentile_pair(X_train[column].to_numpy(dtype=float), percentiles),
         )
         for j, (feature, column) in enumerate(pairs)
     ]
@@ -209,7 +251,14 @@ def build_feature_reference(
         n_train=len(labels),
         n_legit=len(legit),
         features=features,
+        range_percentiles=percentiles,
     )
+
+
+def _percentile_pair(values: np.ndarray, percentiles: tuple[float, float]) -> tuple[float, float]:
+    """``np.percentile(values, percentiles)`` (linear interpolation) as a float pair."""
+    low, high = np.percentile(values, percentiles)
+    return float(low), float(high)
 
 
 def legit_percentile(value: float, quantiles: Sequence[float]) -> float:

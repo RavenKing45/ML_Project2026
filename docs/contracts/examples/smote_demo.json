@@ -1,13 +1,14 @@
 {
-  "contract_version": "1.5",
+  "contract_version": "1.6",
   "is_example": true,
   "request": {
     "scenario": "two_clusters",
     "n_legit": 4,
     "n_fraud": 4,
-    "k_neighbors": 1,
+    "k_neighbors": 2,
     "sampling_strategy": 1.0,
-    "seed": 42
+    "seed": 42,
+    "oversample_percent": null
   },
   "original": [
     {
@@ -72,5 +73,82 @@
   "n_synthetic_in_legit_region": 1,
   "warnings": [
     "Example warning: 1 synthetic point fell between the two fraud clusters."
-  ]
+  ],
+  "fraud_neighbors": [
+    {
+      "point": 4,
+      "neighbors": [
+        5,
+        6
+      ]
+    },
+    {
+      "point": 5,
+      "neighbors": [
+        4,
+        6
+      ]
+    },
+    {
+      "point": 6,
+      "neighbors": [
+        7,
+        4
+      ]
+    },
+    {
+      "point": 7,
+      "neighbors": [
+        6,
+        4
+      ]
+    }
+  ],
+  "decision_grid": {
+    "model": "DecisionTreeClassifier(max_depth=4)",
+    "x": [
+      -3.0,
+      0.0,
+      3.0
+    ],
+    "y": [
+      -1.0,
+      1.0,
+      3.0
+    ],
+    "before": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        1,
+        0,
+        1
+      ]
+    ],
+    "after": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        1,
+        1,
+        1
+      ]
+    ]
+  }
 }

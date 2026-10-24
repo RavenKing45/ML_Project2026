@@ -15,7 +15,7 @@ Changing a contract (renaming, removing or retyping a field) needs team agreemen
   (`Time`, `V1`..`V28`, `Amount`) so CSV rows map 1:1.
 * Every model rejects unknown fields (`extra="forbid"`), so a typo fails loudly, and rejects
   NaN / infinity.
-* Every top-level file or payload has `contract_version` (currently `"1.5"`) and `is_example`.
+* Every top-level file or payload has `contract_version` (currently `"1.6"`) and `is_example`.
   `is_example` is `true` only in the fixture files; the dashboard should show an
   "example data" banner when it sees `true`.
 * Probabilities, rates and areas are floats in [0, 1]; counts are non-negative integers;
@@ -236,7 +236,12 @@ scored it (its sampler steps do nothing at prediction time).
 **`artifacts/models/feature_reference.json`** (`fraudstudy.explain.FeatureReference`; an internal
 file read only through `fraudstudy.explain`, not a contract): per model feature (`V1..V28,
 log1p_Amount`), its `raw_column`, 101 quantiles (0th..100th percentile) of that raw column over the
-LEGITIMATE training rows, and the feature's training mean in scaled units. Training rows only.
+LEGITIMATE training rows, and the feature's training mean in scaled units. Since Prompt 13 it also
+holds `range_percentiles` (`deploy.input_range_percentiles`, `[0.1, 99.9]`) and per feature
+`train_range`: those percentiles of the raw column over ALL training rows, behind `/predict`'s
+"outside the range seen in training" warnings. Training rows only. The backend loads it at
+start-up; a missing file is not a problem (predictions then carry no explanation), an invalid one
+or one without ranges is.
 
 ## presets.json — `PresetsFile`
 
@@ -266,8 +271,16 @@ LEGITIMATE training rows, and the feature's training mean in scaled units. Train
 * **Example:** [predict_response.json](contracts/examples/predict_response.json).
 
 Request: `features` (`Transaction`), `model_id` (str, or null for the default model),
-`threshold` (float in [0, 1], or null for the model's tuned threshold). Unknown `model_id` →
-404 with `ErrorResponse` listing valid ids.
+`threshold` (float in [0, 1], or null for the model's tuned threshold), and *(1.6)*
+`input_source` (`"preset"` \| `"edited"` \| `"manual"`, or null). The backend builds the input row
+in the manifest entry's `features` order; `Time` is accepted but not used by the main models.
+
+Errors: an invalid body (missing or extra feature, NaN / infinity, a non-numeric string, `Amount`
+outside [0, 1 000 000], `threshold` outside [0, 1], unknown `input_source`) → 422 with the field
+errors in `details`; unknown `model_id` → 404 with `details = {"valid_ids": [...]}` (the ids that
+can score); no manifest, no default model, or a listed model that is not loaded (always the case
+with `USE_EXAMPLE_ARTIFACTS=true`, which has no model files) → 503 `artifact_unavailable`; over
+60 requests a minute from one client → 429.
 
 | field | type | meaning |
 |-------|------|---------|
@@ -275,12 +288,13 @@ Request: `features` (`Transaction`), `model_id` (str, or null for the default mo
 | risk_score | float | model score in [0, 1]; a ranking score, not a probability |
 | calibrated_probability | float \| null | calibrated fraud probability, null if no calibrator |
 | threshold | float | threshold applied |
-| threshold_source | `"tuned_on_validation_F1"` \| `"tuned_on_validation_F2"` \| `"user_supplied"` \| `"default_0_5"` | where it came from |
+| threshold_source | `"tuned_on_validation_F1"` \| `"tuned_on_validation_F2"` \| `"user_supplied"` \| `"default_0_5"` | where it came from: the request's threshold is `user_supplied`; without one the entry's `default_threshold` gives `tuned_on_validation_F1` / `_F2` (`default_0_5` is not used by the backend) |
 | model | `{id, model, technique}` | which model answered (ids; labels via `MODEL_LABELS` / `TECHNIQUE_LABELS`) |
-| explanation | `{method, units, top_features[]}` \| null | `fraudstudy.explain.explain`: `"TreeSHAP"` (LightGBM) or `"linear"` (logreg), units `"log-odds"`; `top_features[]` (largest \|contribution\| first): `feature` (model feature, e.g. `log1p_Amount`), `value` (its RAW input value, e.g. the Amount), `contribution`, `legit_percentile` (0-100, among legitimate training rows) |
-| warnings | str[] | e.g. "edited transaction may not resemble real payments" |
+| explanation | `{method, units, top_features[]}` \| null | `fraudstudy.explain.explain`, top 8: `"TreeSHAP"` (LightGBM) or `"linear"` (logreg), units `"log-odds"`; `top_features[]` (largest \|contribution\| first): `feature` (model feature, e.g. `log1p_Amount`), `value` (its RAW input value, e.g. the Amount), `contribution`, `legit_percentile` (0-100, among legitimate training rows). Null, with a warning saying why, when `feature_reference.json` is missing or does not fit the model |
+| warnings | str[] | in order: `"Edited transaction may not resemble real payments; the model is extrapolating."` (`input_source` edited / manual); `"<column> is outside the range seen in training (below its 0.1th percentile)."` (or above its 99.9th) per input outside its `train_range`; no explanation; no calibrated probability because the calibrator failed to load |
 | disclaimer | str | research-only notice |
 | latency_ms | float | server time |
+| technique_scores *(1.6)* | `TechniqueScore[]` | the same payment scored by every loaded LightGBM model (manifest order): `id, model, technique, risk_score, threshold, label`. Each uses its OWN tuned default threshold, also when the request gives one (resampling shifts score scales, so one cut-off would not compare techniques fairly); `label` is validated against `risk_score >= threshold`. Empty when no LightGBM model is loaded |
 
 The backend must never log feature values.
 
@@ -290,6 +304,32 @@ The backend must never log feature values.
   **Read by:** dashboard batch page (builds the downloadable CSV from `results`).
 * **Example:** [batch_response.json](contracts/examples/batch_response.json).
 
+Request: `multipart/form-data` with one field `file` whose filename ends in `.csv` (UTF-8, comma-
+separated, header row), and optional query parameters `model_id` and `threshold` (as in
+`/predict`). The body is streamed and kept in memory, never written to disk; reading stops once the
+file passes `MAX_UPLOAD_MB`. Columns: the model's `features` (`V1..V28, Amount`) are required;
+`Time` (unless the model uses it) and unknown columns are ignored (unknown ones are named in
+`warnings`); an optional `Class` (0/1) adds `metrics` (`fraudstudy.evaluation.compute_metrics` at
+the threshold used; null, with a warning, if the scored rows do not hold both classes). An EMPTY
+cell is a missing value, filled by the pipeline's median imputer and counted in `warnings`, except
+an empty `Amount`: that row goes to `errors` and is not scored (its amount could not be shown or
+summed). Every row is scored in one vectorised call; `results` keep the input order.
+
+Errors: a filename not ending in `.csv`, no `file` field or a body that is not multipart → 400;
+missing columns → 400 with `details = {"missing_columns": [...]}`; a cell that is not a finite
+number (text such as `abc` or `NaN`, `inf`), an `Amount` outside [0, 1 000 000] or a `Class` other
+than 0/1 → 400 with `details = {"rows": [first 5], "n_rows", "columns"}` (0-based data rows, never
+the cell values); a row with more fields than the header, duplicate column names, non-UTF-8 or an
+empty file → 400; a file over `MAX_UPLOAD_MB` → 413 (`details.max_bytes`); more than
+`MAX_BATCH_ROWS` data rows → 413 (`details.max_rows`); `model_id` / threshold as in `/predict`;
+over 10 uploads a minute from one client → 429.
+
+Prompt 13 described the summary as `{rows, flagged, flagged_pct, flagged_amount_total, metrics,
+warnings}` and the rows as `{row, risk_score, label, amount, true_class}`; those are this
+contract's `n_rows`, `n_flagged`, `flagged_fraction` (a fraction, not a percent),
+`flagged_amount_total`, `metrics`, `warnings` and `results[]` (plus `true_class`, added in 1.6).
+The names were kept to avoid a breaking change.
+
 | field | type | meaning |
 |-------|------|---------|
 | model, threshold, threshold_source | as in `PredictResponse` | |
@@ -297,8 +337,8 @@ The backend must never log feature values.
 | flagged_fraction | float | `n_flagged / n_scored` |
 | flagged_amount_total | float | sum of `Amount` over flagged rows |
 | metrics | `Metrics` \| null | only if the CSV had a `Class` column |
-| results[] | `{row, amount, risk_score, calibrated_probability, label}` | `row` is 0-based, header excluded |
-| errors[] | `{row, message}` | rows that could not be scored |
+| results[] | `{row, amount, risk_score, calibrated_probability, label, true_class}` | `row` is 0-based, header excluded; `true_class` *(1.6, optional)* is the row's `Class`, or null without that column |
+| errors[] | `{row, message}` | rows that could not be scored (an empty `Amount`) |
 | warnings, disclaimer, latency_ms | as in `PredictResponse` | |
 
 The backend must never log or store uploaded file contents.
@@ -356,21 +396,35 @@ example.
 
 ## POST /api/v1/smote-demo — `SmoteDemoRequest` → `SmoteDemoResponse`
 
-* **Written by:** backend (runs real `imblearn` SMOTE on a 2-D toy dataset). **Read by:**
-  dashboard SMOTE explainer (whose built-in JS fallback should produce the same shape).
+* **Written by:** backend (`backend/app/services/smote_demo.py`), on a fixed 2-D toy dataset. It
+  runs a transparent re-implementation of imblearn's `SMOTE` that follows the same procedure
+  (`NearestNeighbors(k + 1)` over the fraud points; `RandomState(seed)` draws `randint` picks of
+  parent and neighbour, then `uniform` gaps), so for the same points, `k`, count and seed it gives
+  exactly imblearn's synthetic points (a test checks it); it exists to expose each point's parent,
+  neighbour and gap. The experiment itself uses imblearn. **Read by:** dashboard SMOTE explainer
+  (whose built-in JS fallback should produce the same shape).
 * **Example:** [smote_demo.json](contracts/examples/smote_demo.json).
 
 Request (all optional, default in brackets): `scenario` (`single_cluster` \| `two_clusters`
 [default] \| `overlap`), `n_legit` (2-2000 [300]), `n_fraud` (2-200 [20]), `k_neighbors`
-(1-15 [5], must be < `n_fraud`), `sampling_strategy` ((0, 1] [0.5]), `seed` ([42]).
+(1-15 [5], must be < `n_fraud`), `sampling_strategy` ((0, 1] [0.5]), `seed` ([42]; 0 to
+2^32 - 1, else 422), and *(1.6)* `oversample_percent` (100-500 in steps of 100, or null). The
+number of synthetic points is `n_fraud * oversample_percent / 100` when that is given (then
+`sampling_strategy` is ignored, with a warning), else `int(n_legit * sampling_strategy -
+n_fraud)` (imblearn's rule; 0 with a warning when not positive). The toy data depends only on
+`scenario`, `n_legit` and `n_fraud` (never on `seed`); the default has 300 legitimate points and
+two separate fraud clusters of 10. Legitimate points come first in `original`, then the fraud
+points. Over 30 requests a minute from one client → 429.
 
 | field | type | meaning |
 |-------|------|---------|
 | request | `SmoteDemoRequest` | echo of the request |
 | original[] | `{x, y, label}` | toy data |
-| synthetic[] | `{x, y, parent, neighbor, gap, in_legit_region}` | x_new = x + λ(x̂ − x) with x = `original[parent]`, x̂ = `original[neighbor]`, λ = `gap` |
+| synthetic[] | `{x, y, parent, neighbor, gap, in_legit_region}` | x_new = x + λ(x̂ − x) with x = `original[parent]`, x̂ = `original[neighbor]`, λ = `gap` in [0, 1); `in_legit_region` when most of its 5 nearest original points are legitimate |
 | n_synthetic_in_legit_region | int | synthetic frauds that landed among legit points (SMOTE failure cases) |
-| warnings | str[] | |
+| warnings | str[] | `sampling_strategy` ignored; nothing generated; "large k can connect distant fraud clusters, creating synthetic points in legitimate territory" (some neighbour lists join two clusters); how many synthetic points landed among legitimate ones |
+| fraud_neighbors *(1.6)* | `{point, neighbors[]}[]` | per fraud point (index into `original`), its `k_neighbors` nearest other fraud points, nearest first (indices into `original`) |
+| decision_grid *(1.6)* | `{model, x[], y[], before[][], after[][]}` \| null | `DecisionTreeClassifier(max_depth=4, random_state=seed)` labels (0/1) on a 40 x 40 grid over the data, trained on `original` (`before`) and on `original` + `synthetic` (`after`); `before[i][j]` is the label at `(x[j], y[i])` (shape validated) |
 
 ---
 
