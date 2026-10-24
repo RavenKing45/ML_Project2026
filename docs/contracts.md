@@ -15,7 +15,7 @@ Changing a contract (renaming, removing or retyping a field) needs team agreemen
   (`Time`, `V1`..`V28`, `Amount`) so CSV rows map 1:1.
 * Every model rejects unknown fields (`extra="forbid"`), so a typo fails loudly, and rejects
   NaN / infinity.
-* Every top-level file or payload has `contract_version` (currently `"1.0"`) and `is_example`.
+* Every top-level file or payload has `contract_version` (currently `"1.1"`) and `is_example`.
   `is_example` is `true` only in the fixture files; the dashboard should show an
   "example data" banner when it sees `true`.
 * Probabilities, rates and areas are floats in [0, 1]; counts are non-negative integers;
@@ -129,21 +129,36 @@ null), `statistic`, `p_value`, `p_value_adjusted`, `significant` (bool, from the
 
 ## eda.json — `EdaSummary`
 
-* **Written by:** EDA squad (EDA script/notebook using `src/fraudstudy`).
+* **Written by:** EDA squad, `python scripts/run_eda.py --source raw|sample`
+  (`fraudstudy.eda.compute_eda_summary`).
 * **Read by:** backend (`/eda`), dashboard Overview and Imbalance pages, report.
 * **Example:** [eda.json](contracts/examples/eda.json).
+
+Raw-file facts (`n_rows`, `n_columns`, `class_counts`, `fraud_rate`, `imbalance_ratio`,
+`missing_values`) describe the file as loaded; every distributional field describes the
+**deduplicated** data. EDA is descriptive only; nothing in it feeds model choices.
 
 | field | type | meaning |
 |-------|------|---------|
 | dataset_source, dataset_sha256 | str | provenance |
 | n_rows, n_columns | int | raw shape (before dedup) |
-| class_counts, fraud_rate | `ClassCounts`, float | class balance |
+| class_counts, fraud_rate | `ClassCounts`, float | class balance of the raw file |
 | n_duplicate_rows, n_duplicate_frauds | int | exact duplicates beyond the first occurrence |
 | missing_values | {column: int} | missing count per column |
 | amount | `{legit, fraud}` of `Distribution` | `count, mean, std, min, q1, median, q3, max, n_zero` |
-| amount_histogram, time_histogram | `Histogram` | `bin_edges[]` (n+1), `legit_counts[]`, `fraud_counts[]` (n) |
-| feature_separation | `FeatureSeparation[]` | per feature: class means/stds and KS statistic, sorted by KS desc |
-| training_counts | `TrainingCounts[]` | per technique: `technique`, `ratio`, `before`, `after` (`ClassCounts`) on the full training set at the tuned ratio |
+| amount_histogram | `Histogram` | `bin_edges[]` (n+1), `legit_counts[]`, `fraud_counts[]` (n); the 20 `log1p(Amount)` bins mapped back to raw units with `expm1` |
+| time_histogram | `Histogram` | one bin per hour of `Time` |
+| feature_separation | `FeatureSeparation[]` | per feature (`V1..V28, Amount`): class means/stds and KS statistic, sorted by KS desc (validated) |
+| training_counts | `TrainingCounts[]` | per technique: `technique`, `ratio`, `before`, `after` (`ClassCounts`) on the full training set at the tuned ratio. Filled by the experiment code; `[]` from the EDA script (default since 1.1) |
+| imbalance_ratio *(1.1)* | str \| null | `"1 : N"`, `N = round(legit / fraud)` on the raw file |
+| class_counts_dedup *(1.1)* | `ClassCounts` \| null | class counts after deduplication |
+| amount_summary *(1.1)* | `{raw, log1p}` of `AmountStats` \| null | `min, median, mean, max, skewness` (bias-corrected G1), both classes pooled |
+| time_span_hours *(1.1)* | float \| null | `(max Time - min Time) / 3600` |
+| effect_sizes *(1.1)* | `EffectSize[]` | per feature: `feature, cohens_d, legit_mean, fraud_mean`; `d = (mean_fraud - mean_legit) / pooled SD`; sorted by `|d|` desc (validated) |
+| feature_histograms *(1.1)* | `FeatureHistogram[]` | 20 shared bins for the 6 PCA features with largest `|d|`, then `log1p(Amount)`: `Histogram` fields plus `feature`, `legit_fraction[]`, `fraud_fraction[]` (each class sums to 1) and `bin_range_quantiles` (the bins span the union of each class's quantile range; values beyond it count in the outer bins) |
+| hour_of_day *(1.1)* | `HourOfDay` \| null | `fraud_counts[24]`, `legit_counts[24]` with `hour = floor(Time/3600) mod 24`, and `hour_assumption`: `"assumes Time=0 is midnight; not documented by the data provider"` |
+
+Fields marked *(1.1)* are optional, so a 1.0 file still validates.
 
 ## resampling_audit.json — `ResamplingAudit`
 

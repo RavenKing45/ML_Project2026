@@ -18,7 +18,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CONTRACT_VERSION = "1.0"
+CONTRACT_VERSION = "1.1"
 MAX_CURVE_POINTS = 101
 AMOUNT_MAX = 1_000_000.0
 
@@ -361,8 +361,91 @@ class TrainingCounts(StrictModel):
     after: ClassCounts
 
 
+class AmountStats(StrictModel):
+    """Summary of ``Amount`` (both classes pooled). ``skewness`` is the bias-corrected
+    Fisher-Pearson coefficient G1 (0 for a symmetric distribution)."""
+
+    min: float
+    median: float
+    mean: float
+    max: float
+    skewness: float
+
+
+class AmountSummary(StrictModel):
+    """``Amount`` statistics on the raw scale and after ``log1p`` (``log(1 + Amount)``)."""
+
+    raw: AmountStats
+    log1p: AmountStats
+
+
+class EffectSize(StrictModel):
+    """Standardised difference of one feature between classes (Cohen's d).
+
+    ``d = (fraud_mean - legit_mean) / s_pooled`` with
+    ``s_pooled = sqrt(((n_f - 1) s_f^2 + (n_l - 1) s_l^2) / (n_f + n_l - 2))``; positive means
+    fraud rows have larger values. ``|d|`` of 0.2 / 0.5 / 0.8 is conventionally small / medium /
+    large.
+    """
+
+    feature: str
+    cohens_d: float
+    legit_mean: float
+    fraud_mean: float
+
+
+class FeatureHistogram(Histogram):
+    """Per-class histogram of one feature over shared bins, with per-class fractions.
+
+    ``legit_fraction[i] = legit_counts[i] / sum(legit_counts)`` (likewise for fraud), so the two
+    classes can be compared despite the imbalance. The bins span the union of each class's
+    ``bin_range_quantiles`` range; values beyond it are counted in the outermost bins.
+    """
+
+    feature: str
+    legit_fraction: list[Unit]
+    fraud_fraction: list[Unit]
+    bin_range_quantiles: Interval
+
+    @model_validator(mode="after")
+    def _fractions(self) -> "FeatureHistogram":
+        n = len(self.legit_counts)
+        if not (len(self.legit_fraction) == len(self.fraud_fraction) == n):
+            raise ValueError("FeatureHistogram fractions need one value per bin.")
+        _check_interval("bin_range_quantiles", self.bin_range_quantiles)
+        return self
+
+
+HOUR_ASSUMPTION = "assumes Time=0 is midnight; not documented by the data provider"
+HOURS_PER_DAY = 24
+
+
+class HourOfDay(StrictModel):
+    """Transactions per hour of day, ``hour = floor(Time / 3600) mod 24``.
+
+    Index ``i`` of each list is hour ``i`` (0-23). ``hour_assumption`` states that the clock time
+    is a guess (the provider never said when ``Time=0`` is).
+    """
+
+    hour_assumption: str
+    fraud_counts: list[NonNegInt]
+    legit_counts: list[NonNegInt]
+
+    @model_validator(mode="after")
+    def _shape(self) -> "HourOfDay":
+        if not (len(self.fraud_counts) == len(self.legit_counts) == HOURS_PER_DAY):
+            raise ValueError(f"HourOfDay needs {HOURS_PER_DAY} counts per class.")
+        return self
+
+
 class EdaSummary(TopLevel):
-    """``eda.json``: dataset summary plus before/after resampling counts per technique."""
+    """``eda.json``: dataset summary plus before/after resampling counts per technique.
+
+    ``n_rows``, ``n_columns``, ``class_counts``, ``fraud_rate``, ``imbalance_ratio`` and
+    ``missing_values`` describe the raw file; every distributional field describes the
+    deduplicated data. Fields added in 1.1 are optional so 1.0 files still validate.
+    ``training_counts`` is filled by the experiment code (it needs tuned ratios) and may be empty.
+    """
 
     dataset_source: DatasetSource
     dataset_sha256: str
@@ -377,7 +460,25 @@ class EdaSummary(TopLevel):
     amount_histogram: Histogram
     time_histogram: Histogram
     feature_separation: list[FeatureSeparation]
-    training_counts: list[TrainingCounts]
+    training_counts: list[TrainingCounts] = Field(default_factory=list)
+    # --- added in 1.1 (all optional) ---
+    imbalance_ratio: Annotated[str, Field(pattern=r"^1 : [0-9]+$")] | None = None
+    class_counts_dedup: ClassCounts | None = None
+    amount_summary: AmountSummary | None = None
+    time_span_hours: NonNegFloat | None = None
+    effect_sizes: list[EffectSize] = Field(default_factory=list)
+    feature_histograms: list[FeatureHistogram] = Field(default_factory=list)
+    hour_of_day: HourOfDay | None = None
+
+    @model_validator(mode="after")
+    def _sorted(self) -> "EdaSummary":
+        ks = [f.ks_statistic for f in self.feature_separation]
+        if ks != sorted(ks, reverse=True):
+            raise ValueError("feature_separation must be sorted by ks_statistic, descending.")
+        d = [abs(e.cohens_d) for e in self.effect_sizes]
+        if d != sorted(d, reverse=True):
+            raise ValueError("effect_sizes must be sorted by |cohens_d|, descending.")
+        return self
 
 
 # --- resampling_audit.json ----------------------------------------------------------------------
