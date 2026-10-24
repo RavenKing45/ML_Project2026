@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.2",
+  "contract_version": "1.3",
   "is_example": true,
   "primary_metric": "average_precision",
   "dataset_source": "synthetic",

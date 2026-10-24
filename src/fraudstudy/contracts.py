@@ -18,7 +18,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CONTRACT_VERSION = "1.2"
+CONTRACT_VERSION = "1.3"
 MAX_CURVE_POINTS = 101
 AMOUNT_MAX = 1_000_000.0
 
@@ -251,7 +251,12 @@ class PairwiseTest(StrictModel):
     """One statistical comparison of two techniques under the same model.
 
     ``difference`` is metric(technique_a) - metric(technique_b); ``difference_ci`` its bootstrap CI
-    (``None`` for tests that do not produce one, e.g. Wilcoxon or McNemar).
+    (``None`` for tests that do not produce one, e.g. Wilcoxon or McNemar). For a paired test on
+    fold scores, ``difference`` is the mean of the per-fold differences.
+
+    Since 1.3 (optional): ``n_pairs`` paired blocks, ``median_difference`` the median per-block
+    difference, and ``wins`` / ``ties`` / ``losses`` the blocks where technique_a scored higher /
+    equal / lower than technique_b.
     """
 
     model: ModelId
@@ -265,10 +270,18 @@ class PairwiseTest(StrictModel):
     p_value: Unit
     p_value_adjusted: Unit
     significant: bool
+    n_pairs: NonNegInt | None = None
+    median_difference: float | None = None
+    wins: NonNegInt | None = None
+    ties: NonNegInt | None = None
+    losses: NonNegInt | None = None
 
     @model_validator(mode="after")
     def _ci(self) -> "PairwiseTest":
         _check_interval("difference_ci", self.difference_ci)
+        counts = (self.wins, self.ties, self.losses)
+        if self.n_pairs is not None and None not in counts and sum(counts) != self.n_pairs:
+            raise ValueError(f"wins + ties + losses must equal n_pairs ({self.n_pairs}).")
         return self
 
 
@@ -289,7 +302,11 @@ class FriedmanTest(StrictModel):
 
 
 class StatsResult(TopLevel):
-    """``stats.json``: Friedman tests and pairwise tests with multiple-comparison correction."""
+    """``stats.json``: Friedman tests and pairwise tests with multiple-comparison correction.
+
+    Since 1.3 (optional): ``dataset_source`` of the fold scores and ``notes``, caveats the
+    dashboard and report must show next to the tests (e.g. that fold scores are not independent).
+    """
 
     alpha: Annotated[float, Field(gt=0.0, lt=1.0)]
     correction: Literal["holm", "bonferroni", "none"]
@@ -298,6 +315,8 @@ class StatsResult(TopLevel):
     seed: int
     friedman: list[FriedmanTest]
     pairwise: list[PairwiseTest]
+    dataset_source: DatasetSource | None = None
+    notes: list[str] = Field(default_factory=list)
 
 
 # --- eda.json -----------------------------------------------------------------------------------

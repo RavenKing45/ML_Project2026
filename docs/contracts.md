@@ -15,7 +15,7 @@ Changing a contract (renaming, removing or retyping a field) needs team agreemen
   (`Time`, `V1`..`V28`, `Amount`) so CSV rows map 1:1.
 * Every model rejects unknown fields (`extra="forbid"`), so a typo fails loudly, and rejects
   NaN / infinity.
-* Every top-level file or payload has `contract_version` (currently `"1.2"`) and `is_example`.
+* Every top-level file or payload has `contract_version` (currently `"1.3"`) and `is_example`.
   `is_example` is `true` only in the fixture files; the dashboard should show an
   "example data" banner when it sees `true`.
 * Probabilities, rates and areas are floats in [0, 1]; counts are non-negative integers;
@@ -126,6 +126,13 @@ writers must downsample.
 `PairwiseTest`: `model`, `technique_a`, `technique_b`, `test` (`wilcoxon` \| `paired_bootstrap` \|
 `mcnemar`), `metric` (str), `difference` (metric(a) − metric(b)), `difference_ci` ([low, high] or
 null), `statistic`, `p_value`, `p_value_adjusted`, `significant` (bool, from the adjusted p).
+For the Wilcoxon test on fold scores, `difference` is the mean per-fold difference.
+
+Optional fields *(1.3)*: `PairwiseTest` gains `n_pairs`, `median_difference` (median per-fold
+difference) and `wins` / `ties` / `losses` (folds where a scored higher / equal / lower than b;
+they sum to `n_pairs`). `StatsResult` gains `dataset_source` (`real` \| `synthetic`) and `notes`
+(caveats to show next to the tests, e.g. that fold scores are not independent, so p-values are
+approximate).
 
 ## eda.json — `EdaSummary`
 

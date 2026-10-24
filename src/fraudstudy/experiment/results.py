@@ -236,6 +236,34 @@ def read_fold_scores(path: Path) -> pd.DataFrame:
     return df[list(FOLD_COLUMNS)]
 
 
+def source_fold_scores(results_dir: Path, source: str) -> pd.DataFrame:
+    """``fold_scores.csv`` rows of the finished cells in ``results_dir/cells`` run on ``source``
+    (the statistics and figures must not mix synthetic and real cells).
+
+    Args:
+        results_dir: Folder with ``cells/`` and ``fold_scores.csv``.
+        source: ``"raw"`` or ``"sample"``.
+
+    Returns:
+        The matching rows (:data:`FOLD_COLUMNS`), index reset.
+
+    Raises:
+        DataValidationError: If there are no fold scores of finished ``source`` cells.
+    """
+    records = [load_cell_record(p) for p in sorted((Path(results_dir) / CELLS_DIR).glob("*.json"))]
+    cells = {(r.model, r.technique) for r in records if r.source == source}
+    path = Path(results_dir) / FOLD_SCORES_FILE
+    scores = read_fold_scores(path)
+    keep = [(m, t) in cells for m, t in zip(scores["model"], scores["technique"], strict=True)]
+    scores = scores[keep].reset_index(drop=True)
+    if scores.empty:
+        raise DataValidationError(
+            f"No fold scores of finished {source} cells in {path}; run "
+            f"scripts/run_experiments.py --source {source} first."
+        )
+    return scores
+
+
 def upsert_fold_scores(new_rows: pd.DataFrame, path: Path) -> Path:
     """Write ``new_rows`` into ``fold_scores.csv``, replacing earlier rows of the same cells.
 

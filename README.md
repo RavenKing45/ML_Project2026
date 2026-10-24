@@ -27,6 +27,8 @@ for development only).
 | merge machines | `python scripts/merge_results.py --inputs DIR [DIR ...] [--output artifacts/results]` | `cv_summary.json`, de-duplicated `fold_scores.csv`; lists missing cells |
 | test evaluation (once) | `python scripts/evaluate_test.py --source raw [--cells model__technique ...] [--rerun-reason "<why>"]` | `artifacts/results/comparison.json`, `curves.json`, `test_eval_details.json`, `TEST_SET_OPENED.json` (guard: a second run needs `--rerun-reason`, logged in `docs/decisions.md`); `--source sample` is exempt and writes to `artifacts/results/sample_test_eval/` |
 | temporal check (sensitivity only) | `python scripts/run_temporal_check.py --source raw [--model lightgbm]` | `artifacts/results/temporal_check.json`; raw runs only after the test evaluation |
+| statistics | `python scripts/run_stats.py --source raw` | `artifacts/results/stats.json` (Wilcoxon vs baseline with Holm, Friedman, Nemenyi CD) and `docs/findings.md` (auto tables; the team-written "Interpretation" section is kept on re-runs); `--source sample` writes both to `artifacts/results/sample_test_eval/` |
+| report figures | `python scripts/make_figures.py --source raw` | PR / ROC curves, PR-AUC with CIs, confusion matrices, threshold effect, CD diagrams, resampling counts, fold-score box plots in `artifacts/figures/` (`artifacts/figures/sample/` for the sample); then re-run `run_stats.py` to link them |
 | checks | `ruff check . && pytest -q` | lint and tests (synthetic sample only) |
 
 Full setup (experiment, backend, dashboard) will be added as those parts land.

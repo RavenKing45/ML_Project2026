@@ -13,4 +13,5 @@ parallel: {model_n_jobs: -1, search_n_jobs: 1}   # models use all cores; CV/sear
 quick: {train_fraction: 0.10, cv_folds: 3, n_iter: 3, cv_repeats: 1}
 threshold: {objectives: [f1, f2]}
 bootstrap: {n_resamples: 1000, confidence: 0.95}
+stats: {alpha: 0.05}   # Wilcoxon (Holm), Friedman and Nemenyi CD in scripts/run_stats.py
 use_hour_feature: false   # optional side test; assumes Time=0 is midnight (unverified)
