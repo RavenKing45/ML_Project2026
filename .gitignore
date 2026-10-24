@@ -1,0 +1,25 @@
+# Dataset
+Dataset/
+*.csv
+
+# Generated model files and results
+models/
+results/
+*.pkl
+*.joblib
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# Jupyter temporary files
+.virtual_documents/
+
+# CatBoost logs
+catboost_info/
+
+# Local databases
+*.db
