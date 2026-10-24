@@ -1,0 +1,43 @@
+{
+  "contract_version": "1.1",
+  "is_example": true,
+  "label": "FRAUD",
+  "risk_score": 0.5,
+  "calibrated_probability": 0.123,
+  "threshold": 0.25,
+  "threshold_source": "tuned_on_validation_F1",
+  "model": {
+    "id": "lightgbm__smote_rus",
+    "model": "lightgbm",
+    "technique": "smote_rus"
+  },
+  "explanation": {
+    "method": "TreeSHAP",
+    "units": "log-odds",
+    "top_features": [
+      {
+        "feature": "V14",
+        "value": -5.0,
+        "contribution": 1.23,
+        "legit_percentile": 0.5
+      },
+      {
+        "feature": "V4",
+        "value": 5.0,
+        "contribution": 0.5,
+        "legit_percentile": 99.5
+      },
+      {
+        "feature": "V12",
+        "value": -5.0,
+        "contribution": 0.123,
+        "legit_percentile": 1.0
+      }
+    ]
+  },
+  "warnings": [
+    "Example warning: Time is ignored by the model."
+  ],
+  "disclaimer": "Research demo on anonymised public data. Not a real fraud decision.",
+  "latency_ms": 12.3
+}
