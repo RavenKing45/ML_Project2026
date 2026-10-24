@@ -181,8 +181,8 @@ def test_pipeline_structure(cfg: dict[str, Any], exp_cfg: dict[str, Any]) -> Non
 def test_pipeline_rejects_unknown_or_unimplemented(
     cfg: dict[str, Any], exp_cfg: dict[str, Any]
 ) -> None:
-    with pytest.raises(ConfigError, match="model 'random_forest'"):
-        build_pipeline("random_forest", "baseline", cfg=cfg, exp_cfg=exp_cfg)
+    with pytest.raises(ConfigError, match="model 'svm'"):
+        build_pipeline("svm", "baseline", cfg=cfg, exp_cfg=exp_cfg)
     with pytest.raises(ConfigError, match="technique 'adasyn'"):
         build_pipeline("logreg", "adasyn", cfg=cfg, exp_cfg=exp_cfg)
     with pytest.raises(ConfigError, match="no parameters"):

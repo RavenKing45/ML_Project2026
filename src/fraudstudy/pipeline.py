@@ -12,11 +12,11 @@ from typing import Any
 
 from imblearn.pipeline import Pipeline
 from sklearn.base import BaseEstimator
-from sklearn.linear_model import LogisticRegression
 
 from fraudstudy.config import get_dataset_config, get_experiment_config
 from fraudstudy.errors import ConfigError
 from fraudstudy.features import build_preprocessor
+from fraudstudy.models import MODEL_NAMES, get_model
 from fraudstudy.sampling import (
     BALANCED,
     CLASS_WEIGHT_PARAM,
@@ -29,12 +29,16 @@ from fraudstudy.sampling import (
 ModelBuilder = Callable[[dict[str, Any], int], BaseEstimator]
 
 
-def _build_logreg(params: dict[str, Any], seed: int) -> BaseEstimator:
-    """Logistic regression with ``random_state=seed`` and the given hyper-parameters."""
-    return LogisticRegression(random_state=seed, **params)
+def _builder(name: str) -> ModelBuilder:
+    """Registry entry that delegates to :func:`fraudstudy.models.get_model`."""
+
+    def build(params: dict[str, Any], seed: int) -> BaseEstimator:
+        return get_model(name, seed, **params)
+
+    return build
 
 
-MODEL_BUILDERS: dict[str, ModelBuilder] = {"logreg": _build_logreg}
+MODEL_BUILDERS: dict[str, ModelBuilder] = {name: _builder(name) for name in MODEL_NAMES}
 
 
 def _model_params_for(
@@ -77,7 +81,7 @@ def build_pipeline(
     ``k_neighbors = exp_cfg["smote_k_neighbors"]``.
 
     Args:
-        model_name: Key of :data:`MODEL_BUILDERS` (currently ``"logreg"``).
+        model_name: Key of :data:`MODEL_BUILDERS` (``logreg``, ``random_forest``, ``lightgbm``).
         technique: One of :data:`fraudstudy.sampling.TECHNIQUES`.
         model_params: Keyword arguments for the model (e.g. ``{"C": 0.1, "max_iter": 2000}``).
         technique_params: Technique settings, see :func:`fraudstudy.sampling.build_sampler_steps`
