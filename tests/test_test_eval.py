@@ -48,8 +48,8 @@ def _load_script(name: str) -> ModuleType:
 
 
 @pytest.fixture(scope="module")
-def cfgs() -> Configs:
-    return Configs.load()
+def cfgs(test_cfgs: Configs) -> Configs:
+    return test_cfgs  # model_n_jobs capped for the sample (tests/conftest.py)
 
 
 @pytest.fixture(scope="module")
