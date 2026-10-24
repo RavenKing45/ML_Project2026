@@ -5,7 +5,8 @@ __pycache__/
 venv/
 
 # Data
-data/raw/
+data/raw/*
+!data/raw/.gitkeep
 data/processed/
 
 # Generated model files
@@ -14,3 +15,31 @@ data/processed/
 
 # Jupyter
 .ipynb_checkpoints/
+# Python tooling
+*.egg-info/
+.eggs/
+build/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Environment files
+.env
+.env.*
+
+# Node
+node_modules/
+dist/
+npm-debug.log*
+yarn-error.log*
+
+# Large artifacts
+artifacts/models/*.joblib
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

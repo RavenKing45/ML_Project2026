@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fraudstudy"
+version = "0.1.0"
+description = "An Empirical Study of Class-Imbalance Handling Techniques for Credit Card Fraud Detection"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "pandas",
+    "scikit-learn",
+    "imbalanced-learn",
+    "lightgbm",
+    "scipy",
+    "matplotlib",
+    "pyyaml",
+    "joblib",
+    "pydantic>=2",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+# model_build/ is a separate pre-existing package (its own pyproject.toml); lint it separately.
+extend-exclude = [".venv", "frontend", "notebooks", "model_build"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
