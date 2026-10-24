@@ -15,3 +15,14 @@ threshold: {objectives: [f1, f2]}
 bootstrap: {n_resamples: 1000, confidence: 0.95}
 stats: {alpha: 0.05}   # Wilcoxon (Holm), Friedman and Nemenyi CD in scripts/run_stats.py
 use_hour_feature: false   # optional side test; assumes Time=0 is midnight (unverified)
+# Deployable subset for the backend (scripts/export_artifacts.py; master guide Parts 9 and 11).
+# Only logreg and LightGBM fit on the 512 MB server; random forest stays in the JSON results.
+# "logreg__<technique>" means logistic regression with the default cell's technique.
+deploy:
+  cells: [lightgbm__baseline, lightgbm__ros, lightgbm__rus, lightgbm__smote, lightgbm__smote_rus, lightgbm__class_weight, logreg__<technique>]
+  default_cell: null        # the TEAM chooses it from the CV results; never picked automatically
+  default_threshold: f1     # tuned threshold the backend applies when a request gives none
+  calibrate: true           # isotonic calibrator per cell, fitted on its out-of-fold scores
+  max_file_mb: 50           # warn above this per file (free server: 512 MB RAM)
+  presets: {everyday_amount: [5, 50], small_amount_max: 5, large_amount_quantile: 0.99, borderline_window: 0.05}
+  demo_batch: {rows: 500, frauds: 25}   # test rows; fraud share enriched (5% vs 0.17%), so batch precision is optimistic

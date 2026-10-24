@@ -1,5 +1,5 @@
 {
-  "contract_version": "1.3",
+  "contract_version": "1.4",
   "is_example": true,
   "request": {
     "scenario": "two_clusters",

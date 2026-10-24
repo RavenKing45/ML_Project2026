@@ -18,7 +18,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CONTRACT_VERSION = "1.3"
+CONTRACT_VERSION = "1.4"
 MAX_CURVE_POINTS = 101
 AMOUNT_MAX = 1_000_000.0
 
@@ -549,6 +549,11 @@ class ManifestEntry(CellRef):
     ``id`` is ``"<model>__<technique>"``; ``file`` is relative to ``artifacts/models/``.
     ``features`` is the exact column order the pipeline expects; the backend builds its input
     table in this order. ``library_versions`` must match the backend's at load time.
+
+    Optional since 1.4: ``model_label`` / ``technique_label`` (display names);
+    ``default_threshold`` (which tuned threshold applies when a request gives none);
+    ``calibrator_file`` (relative to ``artifacts/models/``) and its ``calibrator_sha256``, set
+    together and only when ``has_calibrator``.
     """
 
     id: str
@@ -560,12 +565,21 @@ class ManifestEntry(CellRef):
     features: list[str]
     data_sha256: str
     library_versions: dict[str, str]
+    model_label: str | None = None
+    technique_label: str | None = None
+    default_threshold: Literal["f1", "f2"] = "f1"
+    calibrator_file: str | None = None
+    calibrator_sha256: Sha256 | None = None
 
     @model_validator(mode="after")
     def _id_matches_cell(self) -> "ManifestEntry":
         expected = f"{self.model}__{self.technique}"
         if self.id != expected:
             raise ValueError(f"Manifest id must be '{expected}' for this cell; got '{self.id}'.")
+        if (self.calibrator_file is None) != (self.calibrator_sha256 is None):
+            raise ValueError(f"{self.id}: set calibrator_file and calibrator_sha256 together.")
+        if self.calibrator_file is not None and not self.has_calibrator:
+            raise ValueError(f"{self.id}: calibrator_file is set but has_calibrator is false.")
         return self
 
 

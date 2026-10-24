@@ -15,7 +15,7 @@ Changing a contract (renaming, removing or retyping a field) needs team agreemen
   (`Time`, `V1`..`V28`, `Amount`) so CSV rows map 1:1.
 * Every model rejects unknown fields (`extra="forbid"`), so a typo fails loudly, and rejects
   NaN / infinity.
-* Every top-level file or payload has `contract_version` (currently `"1.3"`) and `is_example`.
+* Every top-level file or payload has `contract_version` (currently `"1.4"`) and `is_example`.
   `is_example` is `true` only in the fixture files; the dashboard should show an
   "example data" banner when it sees `true`.
 * Probabilities, rates and areas are floats in [0, 1]; counts are non-negative integers;
@@ -192,7 +192,8 @@ resampling that equal no row given to the samplers.
 
 ## artifacts/models/manifest.json — `Manifest`
 
-* **Written by:** research squad, model exporter.
+* **Written by:** research squad, model exporter (`python scripts/export_artifacts.py --source raw
+  --default-cell <model>__<technique>`; `fraudstudy.export`). Written last, after the model files.
 * **Read by:** backend at start-up: loads each listed model, checks file checksum and library
   versions, builds input tables in `features` order. If anything is off, `/health` reports
   `"degraded"`.
@@ -208,17 +209,38 @@ resampling that equal no row given to the samplers.
 | models[] | `ManifestEntry` | see below; ids unique |
 
 `ManifestEntry`: `id` (must be `"<model>__<technique>"`), `model`, `technique`, `file`
-(relative to `artifacts/models/`), `sha256` (64 hex, of the file), `threshold_f1`,
-`threshold_f2`, `has_calibrator`, `features` (exact column order the pipeline expects),
-`data_sha256`, `library_versions` ({package: version}).
+(relative to `artifacts/models/`, e.g. `deploy/lightgbm__smote_rus.joblib`), `sha256` (64 hex, of
+the file), `threshold_f1`, `threshold_f2`, `has_calibrator`, `features` (exact column order the
+pipeline expects: `V1..V28, Amount`), `data_sha256`, `library_versions` ({package: version}).
 
-Only the deployed subset of the 18 pipelines is listed (Part 9: not all 18 fit on a small server).
+Optional fields *(1.4)*: `model_label`, `technique_label` (display names, as `MODEL_LABELS` /
+`TECHNIQUE_LABELS`); `default_threshold` (`"f1"` \| `"f2"`, default `"f1"`: the tuned threshold
+applied when a request gives none, reported as `tuned_on_validation_F1` / `_F2`);
+`calibrator_file` (relative to `artifacts/models/`) and `calibrator_sha256`, set together and only
+when `has_calibrator`. The calibrator is an isotonic regression fitted on the cell's out-of-fold
+TRAINING scores; apply it with `fraudstudy.evaluation.apply_calibrator` to get
+`calibrated_probability`.
+
+Only the deployed subset of the 18 pipelines is listed (Part 9: not all 18 fit on a small server):
+`deploy.cells` in `configs/experiment.yaml`, i.e. the six LightGBM pipelines plus logistic
+regression for the default cell's technique. The default cell is chosen by the team from the CV
+results, never automatically. Each `file` is the cell's pipeline exactly as the test evaluation
+scored it (its sampler steps do nothing at prediction time).
+
+**`artifacts/models/feature_reference.json`** (`fraudstudy.explain.FeatureReference`; an internal
+file read only through `fraudstudy.explain`, not a contract): per model feature (`V1..V28,
+log1p_Amount`), its `raw_column`, 101 quantiles (0th..100th percentile) of that raw column over the
+LEGITIMATE training rows, and the feature's training mean in scaled units. Training rows only.
 
 ## presets.json — `PresetsFile`
 
-* **Written by:** research squad, exporter: 5-6 real test-set payments (everyday legitimate,
-  large legitimate, typical fraud, small-amount fraud, borderline), picked after the single
-  test evaluation.
+* **Written by:** research squad, exporter: up to 6 real test-set payments (`legit_everyday`,
+  `legit_large`, `fraud_typical`, `fraud_small_amount`, `borderline`, `missed_fraud`), picked
+  deterministically with the default model's scores after the single test evaluation (rules in
+  `fraudstudy.export.pick_presets` and `deploy.presets`; a preset with no matching row is left
+  out). `missed_fraud` is a false negative, kept on purpose. On the raw source the export is
+  recorded in the test-set guard. The batch-demo file `data/sample/demo_batch.csv` (500 test rows
+  with `Class`, 25 of them fraud: optimistic precision) is written alongside.
 * **Read by:** backend (`/presets`), dashboard "Try a transaction" page, which posts
   `preset.features` to `/predict`.
 * **Example:** [presets.json](contracts/examples/presets.json).
@@ -249,7 +271,7 @@ Request: `features` (`Transaction`), `model_id` (str, or null for the default mo
 | threshold | float | threshold applied |
 | threshold_source | `"tuned_on_validation_F1"` \| `"tuned_on_validation_F2"` \| `"user_supplied"` \| `"default_0_5"` | where it came from |
 | model | `{id, model, technique}` | which model answered (ids; labels via `MODEL_LABELS` / `TECHNIQUE_LABELS`) |
-| explanation | `{method, units, top_features[]}` \| null | e.g. `"TreeSHAP"`, `"log-odds"`; `top_features[]`: `feature, value, contribution, legit_percentile` (0-100) |
+| explanation | `{method, units, top_features[]}` \| null | `fraudstudy.explain.explain`: `"TreeSHAP"` (LightGBM) or `"linear"` (logreg), units `"log-odds"`; `top_features[]` (largest \|contribution\| first): `feature` (model feature, e.g. `log1p_Amount`), `value` (its RAW input value, e.g. the Amount), `contribution`, `legit_percentile` (0-100, among legitimate training rows) |
 | warnings | str[] | e.g. "edited transaction may not resemble real payments" |
 | disclaimer | str | research-only notice |
 | latency_ms | float | server time |
