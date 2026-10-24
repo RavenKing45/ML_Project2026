@@ -5,6 +5,8 @@ __pycache__/
 venv/
 
 # Data
+# data/raw/* ignores everything main's `data/raw/` ignored, but keeps data/raw/.gitkeep
+# trackable (git cannot re-include a file inside an ignored folder).
 data/raw/*
 !data/raw/.gitkeep
 data/processed/
@@ -15,6 +17,7 @@ data/processed/
 
 # Jupyter
 .ipynb_checkpoints/
+
 # Python tooling
 *.egg-info/
 .eggs/
@@ -37,6 +40,9 @@ yarn-error.log*
 
 # Large artifacts
 artifacts/models/*.joblib
+# Except the deployed models (scripts/export_artifacts.py): the backend image is built from them.
+# Only this folder; cells/ and sample/ stay ignored. Keep each file under the 10 MB commit limit.
+!artifacts/models/deploy/*.joblib
 
 # OS / editor
 .DS_Store
