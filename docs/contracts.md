@@ -15,7 +15,7 @@ Changing a contract (renaming, removing or retyping a field) needs team agreemen
   (`Time`, `V1`..`V28`, `Amount`) so CSV rows map 1:1.
 * Every model rejects unknown fields (`extra="forbid"`), so a typo fails loudly, and rejects
   NaN / infinity.
-* Every top-level file or payload has `contract_version` (currently `"1.1"`) and `is_example`.
+* Every top-level file or payload has `contract_version` (currently `"1.2"`) and `is_example`.
   `is_example` is `true` only in the fixture files; the dashboard should show an
   "example data" banner when it sees `true`.
 * Probabilities, rates and areas are floats in [0, 1]; counts are non-negative integers;
@@ -162,7 +162,9 @@ Fields marked *(1.1)* are optional, so a 1.0 file still validates.
 
 ## resampling_audit.json — `ResamplingAudit`
 
-* **Written by:** research squad, CV runner (records what each sampler did inside each fold).
+* **Written by:** `scripts/run_resampling_audit.py` (every technique x every ratio of its search
+  space x every CV fold of the TRAINING split; the model step is removed, so `model` is the
+  pipeline's model, `logreg`). Later, the CV runner may write the same shape.
 * **Read by:** leakage tests, dashboard "how resampling works" page, report.
 * **Example:** [resampling_audit.json](contracts/examples/resampling_audit.json).
 
@@ -172,6 +174,14 @@ Fields marked *(1.1)* are optional, so a 1.0 file still validates.
 | test_rows_resampled | int | must be 0 |
 | all_checks_passed | bool | every entry has `validation_untouched` and `test_rows_resampled == 0` |
 | entries[] | `ResamplingAuditEntry` | `model, technique, fold, ratio, train_before, train_after, validation, n_synthetic, validation_untouched` |
+| base_ratio *(1.2)* | float \| null | `frauds / legit` of the training data the ratios are checked against |
+| dropped_ratios *(1.2)* | float[] | `ratio_grid` values not above `base_ratio x 1.05` (imblearn rejects them), so not audited or tuned |
+
+Optional entry fields *(1.2)*: `smote_ratio` (technique E's SMOTE ratio a; `ratio` is then the
+final RUS ratio b), `fraud_weight` (technique F's weight `ratio / base_ratio`; data unchanged),
+`fraud_unique_after` and `fraud_duplicates_after` (distinct vs exactly-copied fraud rows after
+resampling, compared in the preprocessed feature space). `n_synthetic` counts fraud rows after
+resampling that equal no row given to the samplers.
 
 ## artifacts/models/manifest.json — `Manifest`
 

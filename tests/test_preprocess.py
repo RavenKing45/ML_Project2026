@@ -183,8 +183,8 @@ def test_pipeline_rejects_unknown_or_unimplemented(
 ) -> None:
     with pytest.raises(ConfigError, match="model 'random_forest'"):
         build_pipeline("random_forest", "baseline", cfg=cfg, exp_cfg=exp_cfg)
-    with pytest.raises(ConfigError, match="technique 'smote'"):
-        build_pipeline("logreg", "smote", cfg=cfg, exp_cfg=exp_cfg)
+    with pytest.raises(ConfigError, match="technique 'adasyn'"):
+        build_pipeline("logreg", "adasyn", cfg=cfg, exp_cfg=exp_cfg)
     with pytest.raises(ConfigError, match="no parameters"):
         build_pipeline(
             "logreg", "baseline", technique_params={"ratio": 0.1}, cfg=cfg, exp_cfg=exp_cfg

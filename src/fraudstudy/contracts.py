@@ -18,7 +18,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CONTRACT_VERSION = "1.1"
+CONTRACT_VERSION = "1.2"
 MAX_CURVE_POINTS = 101
 AMOUNT_MAX = 1_000_000.0
 
@@ -489,6 +489,11 @@ class ResamplingAuditEntry(CellRef):
 
     ``validation_untouched`` is True when the validation fold's rows and labels are identical to
     the pre-resampling split (the leakage check).
+
+    Since 1.2 (optional): for ``smote_rus``, ``ratio`` is the final RUS ratio b and
+    ``smote_ratio`` the SMOTE ratio a; ``fraud_weight`` is technique F's weight ``ratio /
+    base_ratio``; ``fraud_unique_after`` / ``fraud_duplicates_after`` count distinct and
+    exactly-copied fraud rows after resampling.
     """
 
     fold: NonNegInt
@@ -498,6 +503,10 @@ class ResamplingAuditEntry(CellRef):
     validation: ClassCounts
     n_synthetic: NonNegInt
     validation_untouched: bool
+    smote_ratio: Annotated[float, Field(gt=0.0)] | None = None
+    fraud_weight: Annotated[float, Field(gt=0.0)] | None = None
+    fraud_unique_after: NonNegInt | None = None
+    fraud_duplicates_after: NonNegInt | None = None
 
 
 class ResamplingAudit(TopLevel):
@@ -508,6 +517,8 @@ class ResamplingAudit(TopLevel):
     test_rows_resampled: NonNegInt
     all_checks_passed: bool
     entries: list[ResamplingAuditEntry]
+    base_ratio: Annotated[float, Field(gt=0.0)] | None = None
+    dropped_ratios: list[float] = []
 
 
 # --- artifacts/models/manifest.json -------------------------------------------------------------

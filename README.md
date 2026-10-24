@@ -22,6 +22,7 @@ for development only).
 |------|---------|--------|
 | data summary | `python scripts/data_summary.py` | counts per split (printed) |
 | EDA | `python scripts/run_eda.py --source raw` | `artifacts/results/eda.json`, `artifacts/figures/eda_*.png` |
+| resampling audit | `python scripts/run_resampling_audit.py --source raw` | `artifacts/results/resampling_audit.json` (class counts per technique, ratio and CV fold; training split only) |
 | checks | `ruff check . && pytest -q` | lint and tests (synthetic sample only) |
 
 Full setup (experiment, backend, dashboard) will be added as those parts land.
