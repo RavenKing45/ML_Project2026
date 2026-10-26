@@ -23,7 +23,7 @@ artifacts/metrics/               saved results (cells/*.json, test_results.json,
 artifacts/models/                trained pipelines; only lightgbm__*.joblib are committed (each under 10 MB)
 artifacts/sample/                output of runs on the fake sample (Git-ignored)
 tests/test_no_leakage.py, tests/test_smote.py
-app.py                           the Streamlit presentation app (comes in P3)
+app.py                           the Streamlit presentation app
 README.md                        front page: how to run, design decisions, results
 requirements.txt                 every library pinned, plus -e . and -e ./model_build
 pyproject.toml, CLAUDE.md, .gitignore, LICENSE

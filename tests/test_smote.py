@@ -42,6 +42,23 @@ def test_scratch_smote_balances_keeps_originals_and_interpolates() -> None:
         assert on_a_segment, "a synthetic point is not between a fraud and one of its neighbours"
 
 
+def test_scratch_smote_records_parent_neighbour_and_gap() -> None:
+    rng = np.random.default_rng(0)
+    X = np.vstack([rng.normal(0, 1, (60, 3)), rng.normal(3, 1, (12, 3))])
+    y = np.array([0] * 60 + [1] * 12)
+    smote = ScratchSMOTE(k_neighbors=K, random_state=0)
+    X_new, _ = smote.fit_resample(X, y)
+
+    minority = X[y == 1]
+    synthetic = X_new[len(X):]
+    assert len(smote.steps_) == len(synthetic)
+    _, neighbours = NearestNeighbors(n_neighbors=K + 1).fit(minority).kneighbors(minority)
+    for point, (parent, neighbour, gap) in zip(synthetic, smote.steps_, strict=True):
+        assert neighbour in neighbours[parent][1:]  # one of the parent's K nearest frauds
+        assert 0 <= gap < 1
+        assert np.allclose(point, minority[parent] + gap * (minority[neighbour] - minority[parent]))
+
+
 @pytest.mark.parametrize("technique", ["ros", "smote", "rus"])
 @pytest.mark.parametrize("ratio", [0.05, 0.1, 0.5])
 def test_sampler_reaches_its_ratio(train: tuple, technique: str, ratio: float) -> None:

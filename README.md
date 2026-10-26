@@ -29,7 +29,7 @@ artifacts/models/                trained pipelines (only lightgbm__*.joblib are 
 artifacts/sample/                results of trial runs on the fake sample (Git-ignored)
 tests/test_no_leakage.py         proves no validation or test row reaches training
 tests/test_smote.py              checks our from-scratch SMOTE against imblearn
-app.py                           the Streamlit presentation app (added in the next step)
+app.py                           the Streamlit presentation app
 requirements.txt                 every library, pinned to an exact version
 pyproject.toml                   makes src/fraudstudy installable and holds the pytest settings
 CLAUDE.md                        rules for coding sessions in this repository
