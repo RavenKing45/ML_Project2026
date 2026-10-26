@@ -1,98 +1,67 @@
 # CLAUDE.md — rules for every coding session in this repository
 
 ## The project
+"An Empirical Study of Class-Imbalance Handling Techniques for Credit Card Fraud Detection",
+a student group project. We compare 6 ways of handling class imbalance (A baseline,
+B RandomOverSampler, C RandomUnderSampler, D SMOTE, E SMOTE then RandomUnderSampler,
+F class weighting) on 3 models (logistic regression, random forest, LightGBM) using the ULB
+credit-card dataset, without data leakage, and show the results in one Streamlit app.
 
-"An Empirical Study of Class-Imbalance Handling Techniques for Credit Card Fraud Detection".
-Two halves:
-
-1. A controlled, leakage-free experiment: 6 techniques (A baseline, B RandomOverSampler,
-   C RandomUnderSampler, D SMOTE, E SMOTE then RandomUnderSampler, F class weighting)
-   x 3 models (logistic regression, random forest, LightGBM) on the ULB credit-card dataset.
-2. A FastAPI backend and a React + TypeScript dashboard that only READ saved artifacts.
-
-The master guide is docs/master_guide.md. Where it disagrees with docs/decisions.md,
-decisions.md wins: it records later changes, including the October 2026 simplification.
+## Where things are (the final layout: do not add folders or files unless the task says so)
+data/raw/creditcard.csv         the real dataset (Git-ignored; download from Kaggle)
+data/sample/                    small fake copy with the same columns, for tests and quick runs
+model_build/                    our from-scratch SMOTE (a teammate's code: change only when asked)
+src/fraudstudy/data.py          load, check, remove duplicates, split 70/30
+src/fraudstudy/experiments.py   preprocessing, the 6 techniques, the 3 models, tuning, cross-validation
+src/fraudstudy/evaluation.py    the one-time test-set evaluation, metrics, confidence intervals,
+                                significance tests, figures
+notebooks/01_eda.ipynb          exploration and EDA figures
+artifacts/metrics, figures, models   saved results (sample runs go to artifacts/sample/, Git-ignored)
+tests/test_no_leakage.py, tests/test_smote.py
+app.py                          the Streamlit presentation app
+requirements.txt, pyproject.toml, README.md, CLAUDE.md, .gitignore, LICENSE
 
 ## Simple enough to explain (the rule above all the others)
-
 Our examiner opens any file and asks any of us to explain any line. So:
-
-1. Write the most obvious code that is correct. A first-year student who knows basic Python,
-   pandas and scikit-learn must be able to follow every file.
-2. Plain functions and plain dicts. No classes unless a library needs one (a scikit-learn
-   transformer, a Pydantic request body, a React component). No dataclasses, enums, Protocols,
-   generics, custom decorators, registries, factories or "manager" layers.
-3. One job per function. Aim for functions under 40 lines and files under 250 lines. One
-   straight-line function is better than five tiny ones that call each other.
-4. Check only what really goes wrong (missing file, wrong column, bad user input), each with one
-   clear message saying what to fix. No defensive code for things that cannot happen here.
-5. Plain names: fraud_rate, train_rows, best_threshold. No abbreviations except X, y, df, cv.
-6. Every file starts with 2-4 plain sentences: what it does, who calls it, what it reads and
-   writes.
-7. Comments explain WHY, at the places a student would get stuck (for example, why the sampler
-   sits inside the pipeline). Do not comment obvious lines. Docstrings are one or two sentences;
-   Args/Returns sections only for functions with more than 3 parameters.
-8. A number used once can be written inline with a short comment. Only values the team may change,
-   or that must be the same everywhere (seed, ratio grid, CV folds, n_iter, upload limits), go in
-   configs/*.yaml.
-9. Use the library instead of writing your own (scikit-learn metrics, imblearn samplers,
-   scipy.stats, pandas). The one exception is the from-scratch SMOTE in backend/app/smote_demo.py,
-   which exists to teach.
-10. No new dependency without a one-line reason in docs/decisions.md.
-11. Simple type hints on function signatures only (int, float, str, list, dict, pd.DataFrame).
-12. Before creating a file, check whether an existing file is the natural home for the code.
-
-## Before you change anything
-
-1. Read README.md, docs/decisions.md, docs/contracts.md and every file you will touch.
-2. Print the relevant part of the repo tree.
-3. Restate the task in 3-5 bullets and list the files you will create or change.
-4. If the task conflicts with docs/decisions.md or docs/contracts.md, STOP and report the
-   conflict. Never silently change an architectural decision or the shape of a JSON file.
+1. Write the most obvious correct code. A first-year student who knows basic Python, pandas
+   and scikit-learn must be able to follow every file.
+2. Plain functions and plain dicts. No classes unless a library needs one. No dataclasses,
+   enums, custom decorators, registries, factories or "manager" layers.
+3. One job per function, aim for under 40 lines. A straight-line function beats five tiny ones.
+4. Check only what really goes wrong (missing file, wrong columns), each with one clear message.
+5. Plain names: fraud_rate, train_rows, best_threshold. Abbreviations only X, y, df, cv.
+6. Each file starts with 2-4 plain sentences: what it does, who uses it, what it reads and writes.
+7. Comments explain WHY at the places a student would get stuck. Docstrings: one or two sentences.
+8. Settings live in ONE block called SETTINGS at the top of the file that uses them. Numbers used
+   once can be inline with a short comment.
+9. Use the library instead of writing your own (scikit-learn, imblearn, scipy, statsmodels,
+   pandas, matplotlib). The only exception is the teaching SMOTE in model_build/.
+10. No new dependency without a one-line reason in the README's "Design decisions" table.
 
 ## Scientific rules (never break these)
-
-- Never apply any resampler (SMOTE, RandomOverSampler, RandomUnderSampler, ADASYN,
-  BorderlineSMOTE) outside an imblearn.pipeline.Pipeline, and never before the train/test split.
-- Never resample validation or test data. Samplers run only inside Pipeline.fit.
-- Every preprocessing step (imputer, log transform, scaler) lives inside the pipeline so it is
-  fitted on training folds only.
-- Never use the test set for tuning, threshold choice, model choice, calibration or early
-  stopping. Only scripts/evaluate_test.py reads the test set, once.
-- One seed from configs/experiment.yaml (`seed`) for every split, sampler and model.
-- Raw `Time` is not a model feature. Do not remove outliers.
+- Never apply any resampler outside an imblearn.pipeline.Pipeline, and never before the
+  train/test split. Samplers run only inside Pipeline.fit, on training rows only.
+- Every preprocessing step (imputer, log transform, scaler) lives inside the pipeline.
+- Never use the test set for tuning, threshold choice, model choice or early stopping. Only
+  evaluate_test_set() in evaluation.py reads the test set, once, behind its guard file.
+- One seed (SEED in data.py) for every split, sampler and model.
+- Raw Time is not a model feature. Do not remove outliers.
 - Primary metric: average precision (PR-AUC). Never optimise or select on accuracy.
-- Every technique gets the same ratio grid and the same tuning budget (configs/experiment.yaml).
-
-## Engineering rules
-
-- Python 3.11. Package code lives in src/fraudstudy/.
-- Read settings from configs/*.yaml through fraudstudy.config; build paths from the project root.
-- Do not rewrite, rename or reformat files you were not asked to change.
-- Every scientific behaviour has a test (leakage, ratios, metrics, splits, the one-time test-set
-  guard). Never delete, skip or loosen those tests. Code that was removed may lose its tests.
-- The whole Python test suite runs in under 90 s. Tests use data/sample/ only.
-- Never commit data/raw/, .env files, or any file over 10 MB.
-- Frontend: TypeScript, plain React, plain CSS, Recharts. No `any`.
-- Never log transaction feature values or uploaded file contents.
+- Every technique gets the same ratio grid and the same tuning budget (SETTINGS in
+  experiments.py).
 
 ## Git
-
-- Work on a branch made from shaurya and merge it back into shaurya. Never commit to, merge
-  into or push to main.
+- Work directly on branch shaurya. Commit locally; push only with: git push origin shaurya.
+  Never check out, commit to, merge into or push to main, and never create other branches.
+- Do not push until the team member says the step passed review.
 - Before the first commit, run git config user.name and git config user.email and check they
-  are the team member's own name and email. If not, stop and ask.
-- Commits and pull requests are written as that team member. Never add Co-Authored-By,
-  Claude-Session or "Generated with" lines, and never use Claude as the author.
+  are the team member's own. If not, stop and ask.
+- Commits are written as that team member. Never add Co-Authored-By, Claude-Session or
+  "Generated with" lines, and never use Claude as the author.
+- Never commit data/raw/, .env files, or any file over 10 MB.
 
 ## When you finish
-
-1. Run: ruff check . ; pytest -q ; for frontend work also: cd frontend && npm run build && npm test.
-2. Fix any failure you caused. Do not call the task done with failing checks.
-3. Report:
-   - Files created / changed, one line each on what and why
-   - Line counts of the files you touched: before -> after
-   - Commands run and their results
-   - Anything not done, and why
-   - Assumptions you made
-   - Open questions for the team
+1. Run pytest -q (under 60 s). Fix any failure you caused.
+2. Never delete, skip or loosen a test in tests/ to make it pass.
+3. Report: files created / changed / deleted (one line each, with line counts), commands run
+   and their results, anything not done and why, assumptions, open questions for the team.
