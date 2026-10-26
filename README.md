@@ -113,6 +113,28 @@ pytest -q
 real file (6,000 rows, 1.5% fraud). It was made by an earlier version of our code, so that the
 tests and trial runs work without the real dataset. Its numbers mean nothing; never report them.
 
+## Deploy
+
+Live app: <!-- paste the share.streamlit.io link here after deploying -->
+
+The app only reads committed files (`artifacts/metrics/*.json`, `artifacts/figures/*.png` and
+`artifacts/models/lightgbm__*.joblib`), so it runs online without the dataset. Deploy only after
+the real results are committed; otherwise the app shows "No results".
+
+1. Go to https://share.streamlit.io and sign in with GitHub.
+2. Click **Create app** and choose to deploy from a GitHub repository.
+3. Repository `RavenKing45/ML_Project2026`, branch `shaurya`, main file path `app.py`.
+4. Under **Advanced settings**, choose Python **3.11**.
+5. Click **Deploy**. The first build installs `requirements.txt` and takes a few minutes.
+
+- Whoever deploys needs access to the repository from their own GitHub account (and must let
+  Streamlit read it if the repository is private).
+- Keep the two `-e` lines in `requirements.txt`: `data.py` finds `artifacts/` relative to its own
+  file, which only works when the package is installed from the repository folder.
+- A free app goes to sleep when nobody uses it. Open the link about 5 minutes before the demo
+  and click the wake-up button if it shows one.
+- Fallback if the online app fails: on a laptop with the repository, run `streamlit run app.py`.
+
 ## Design decisions
 
 | Decision | Why |
@@ -153,6 +175,47 @@ tests and trial runs work without the real dataset. Its numbers mean nothing; ne
 | Cut: `eda.py` and `run_eda.py` | Replaced by the EDA notebook |
 | Cut: `requirements-dev.txt`, `requirements-notebook.txt`, ruff and its settings | One requirements file is simpler; the linter only ran in the CI, which is cut too |
 | Cut: `.github/` (CI), `.gitattributes`, `docs/` and the empty `.gitkeep` files | The tests run locally with `pytest -q`; the decisions are in this table and the master guide lives in the team document |
+
+## Where to find things
+
+Questions an examiner may ask, and where the answer is in the code. Line numbers are for the
+commit that added this table; update them whenever one of these files changes.
+`data.py`, `experiments.py` and `evaluation.py` are in `src/fraudstudy/`; `sampler.py` is in
+`model_build/src/smote_from_scratch/`.
+
+| Question | File | Function | Lines |
+|---|---|---|---|
+| Where is the data split into train and test? | `data.py` | `split_data()` | 54-67 (`train_test_split` with `stratify=y` at 64-66) |
+| Where are the split size and the one seed set? | `data.py` | SETTINGS | 17 (`SEED`), 18 (`TEST_SIZE`) |
+| Where are duplicate rows removed? | `data.py` | `remove_duplicates()` | 43-51 |
+| How do we know duplicates go before the split? | `experiments.py`, `evaluation.py` | `load_training_data()`, `evaluate_test_set()` | experiments 247-248, evaluation 178-179 (dedupe, then split) |
+| Why is `Time` dropped, and where? | `data.py` | `split_data()` | 60-62 (the comment gives the reason; `df.drop(columns=["Time", "Class"])` at 62) |
+| Where is the preprocessing (imputer, log1p, RobustScaler), and why is it inside the pipeline? | `experiments.py` | `build_preprocessor()` | 76-94 (docstring 77-81 says why) |
+| Where does SMOTE run in the experiment? | `experiments.py` | `build_pipeline()` | 106-123 (SMOTE made at 113, placed at 118-119 between preprocess and model); it runs only inside `Pipeline.fit`, called by `search.fit` in `run_cell()` at 197 |
+| Where is our from-scratch SMOTE? | `sampler.py` | `SMOTE.fit_resample()`, `SMOTE._find_k_neighbors()` | 49-148 and 29-47; the interpolation `x_new = x_i + gap * (x_nn - x_i)` is at 133-135 |
+| How is the from-scratch SMOTE checked, and where is it used? | `tests/test_smote.py`, `app.py` | `test_scratch_smote_*`, `page_smote()` | tests 22-42 and 45-59 (neighbours checked with scikit-learn's `NearestNeighbors`); app 131 |
+| How do we prove a sampler only sees training rows? | `tests/test_no_leakage.py` | `SpySampler`, `test_sampler_sees_only_the_training_part_of_each_fold()` | 22-33, 50-59 |
+| How do we prove predicting never resamples? | `tests/test_no_leakage.py` | `test_predicting_never_calls_the_sampler()` | 62-68 |
+| How do we prove the scaler learns from training rows only? | `tests/test_no_leakage.py` | `test_scaler_ignores_extreme_test_values()` | 71-78 |
+| How do we prove train and test share no row? | `tests/test_no_leakage.py` | `test_train_and_test_share_no_row_and_keep_the_fraud_rate()` | 81-86 |
+| Where are the ratio grid and the tuning budget set? | `experiments.py` | SETTINGS | 47 (`N_ITER`), 49 (`RATIO_GRID`), 50-51 (hybrid ratios), 55-63 (model search spaces) |
+| How does every cell get the same budget and the same ratios? | `experiments.py` | `run_cell()`, `search_space()` | 193-196 (`n_iter` and `RandomizedSearchCV`), 134-135 (ratios taken from `RATIO_GRID`) |
+| How does class weighting match the ratios? | `experiments.py` | `search_space()` | 145-149 (fraud weight = r / base, so weight x frauds = r x legit); explained in the docstring at 127-133 |
+| Where is the threshold chosen? | `experiments.py` | `best_f1_threshold()`, `run_cell()` | 153-162; called at 214 on the out-of-fold training scores from `cross_val_predict` at 201 |
+| Why is the threshold not chosen on test data? | `evaluation.py` | `evaluate_test_set()` | 189-190 read the saved threshold and never recompute it; a threshold tuned on the test set would make the test score too optimistic |
+| Where is the test set opened? | `evaluation.py` | `evaluate_test_set()` | 163-206; 179 is the only line that keeps `X_test` (`experiments.py` throws it away at 248) |
+| What stops a second opening of the test set? | `evaluation.py` | `open_guard()` | 112-125: if `TEST_SET_OPENED.json` (43) exists and there is no `--rerun-reason`, 115-120 raise an error; called at 176 before any data is loaded; tested in `tests/test_no_leakage.py` 89-96 |
+| Where is PR-AUC computed? | `experiments.py`, `evaluation.py` | `run_cell()`, `compute_metrics()` | CV: `scoring="average_precision"` at 195 (tuning) and 207 (fold scores); test: `average_precision_score` at evaluation 65 |
+| Where do the fold scores come from, and why are they comparable across cells? | `experiments.py` | `run_cell()` | 204-207 (`RepeatedStratifiedKFold` with `SEED`: the same folds for every cell) |
+| How does the bootstrap confidence interval work? | `evaluation.py` | `bootstrap_ci()` | 72-93: redraw frauds and legit rows separately (87-90), PR-AUC of each resample (91), 2.5% and 97.5% quantiles (92); `N_BOOTSTRAP` at 41 |
+| Where are the Wilcoxon, Holm and Friedman tests? | `evaluation.py` | `significance_tests()` | 209-248: Wilcoxon 233, Holm 236, Friedman 242 |
+| Where are the training class counts before and after resampling recorded? | `experiments.py` | `counts_after_resampling()`, `run_cell()` | 171-182; saved at 215-216 |
+| How does the app explain a prediction? | `app.py` | `page_try()` | 212-250: only the preprocess step runs (241), LightGBM's `pred_contrib=True` gives each feature's push in log-odds (242), the 6 largest are drawn (243-249) |
+| Where do the app's example payments come from? | `evaluation.py` | `pick_presets()` | 128-160; called at 200, inside the single test-set opening |
+| Which results does the app read? | `app.py` | (module level) | 285-296: the real `artifacts/metrics/`, or `artifacts/sample/` with `--sample` or when the real results are missing |
+
+We spot-checked 10 of these line numbers against the code when writing the table: `data.py` 62,
+`experiments.py` 113, 146, 197, 201, 214, `evaluation.py` 115, 233, 236 and `app.py` 242.
 
 ## Results
 
