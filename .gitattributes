@@ -1,3 +1,0 @@
-# Byte-exact files: their SHA-256 is checked by tests, so never convert line endings.
-data/sample/*.csv -text
-docs/contracts/examples/*.json text eol=lf

@@ -1,366 +1,194 @@
 # An Empirical Study of Class-Imbalance Handling Techniques for Credit Card Fraud Detection
 
-This repository compares six class-imbalance handling techniques (baseline, random
-oversampling, random undersampling, SMOTE, SMOTE followed by random undersampling, and class
-weighting) across logistic regression, random forest and LightGBM on the ULB credit-card fraud
-dataset, using a leakage-free protocol with average precision (PR-AUC) as the primary metric.
-A FastAPI backend and a React + TypeScript dashboard present the saved results read-only.
+This is our student group project. Only about 0.17% of the payments in the ULB credit-card
+dataset are frauds, so a model that always says "legit" is 99.8% accurate and useless. We
+compare six ways of dealing with that imbalance (A no treatment, B random oversampling, C random
+undersampling, D SMOTE, E SMOTE then random undersampling, F class weighting) on three models
+(logistic regression, random forest, LightGBM). Every technique gets the same tuning budget, all
+resampling happens inside the training folds only, and the test set is opened once at the end.
+The main metric is average precision (PR-AUC). A Streamlit app shows the results.
 
-## Quick start
+**Research question:** how do data-level resampling (random oversampling, random undersampling,
+SMOTE and SMOTE + undersampling) and algorithm-level class weighting compare with an untreated
+baseline for detecting fraud in highly imbalanced credit-card data?
 
-```bash
-python -m venv .venv && .venv/Scripts/activate   # macOS/Linux: source .venv/bin/activate
-pip install -r requirements-dev.txt && pip install -e .
-```
-
-Put the Kaggle file at `data/raw/creditcard.csv`
-(<https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud>). Its SHA-256 is pinned in
-`configs/dataset.yaml` and checked on load. Without it, use `--source sample` (synthetic data,
-for development only).
-
-| step | command | output |
-|------|---------|--------|
-| data summary | `python scripts/data_summary.py` | counts per split (printed) |
-| EDA | `python scripts/run_eda.py --source raw` | `artifacts/results/eda.json`, `artifacts/figures/eda_*.png` |
-| resampling audit | `python scripts/run_resampling_audit.py --source raw` | `artifacts/results/resampling_audit.json` (class counts per technique, ratio and CV fold; training split only) |
-| experiments | `python scripts/run_experiments.py --source raw [--quick] [--models ...] [--techniques ...] [--force]` | `artifacts/results/cells/<model>__<technique>.json` + `_oof.npy`, `artifacts/results/fold_scores.csv`, `artifacts/results/run_meta.json`, `artifacts/models/cells/*.joblib` (git-ignored); finished cells are skipped unless `--force` |
-| merge machines | `python scripts/merge_results.py --inputs DIR [DIR ...] [--output artifacts/results]` | `cv_summary.json`, de-duplicated `fold_scores.csv`; lists missing cells |
-| test evaluation (once) | `python scripts/evaluate_test.py --source raw [--cells model__technique ...] [--rerun-reason "<why>"]` | `artifacts/results/comparison.json`, `curves.json`, `test_eval_details.json`, `TEST_SET_OPENED.json` (guard: a second run needs `--rerun-reason`, logged in `docs/decisions.md`); `--source sample` is exempt and writes to `artifacts/results/sample_test_eval/` |
-| temporal check (sensitivity only) | `python scripts/run_temporal_check.py --source raw [--model lightgbm]` | `artifacts/results/temporal_check.json`; raw runs only after the test evaluation |
-| statistics | `python scripts/run_stats.py --source raw` | `artifacts/results/stats.json` (Wilcoxon vs baseline with Holm, Friedman, Nemenyi CD) and `docs/findings.md` (auto tables; the team-written "Interpretation" section is kept on re-runs); `--source sample` writes both to `artifacts/results/sample_test_eval/` |
-| report figures | `python scripts/make_figures.py --source raw` | PR / ROC curves, PR-AUC with CIs, confusion matrices, threshold effect, CD diagrams, resampling counts, fold-score box plots in `artifacts/figures/` (`artifacts/figures/sample/` for the sample); then re-run `run_stats.py` to link them |
-| export for the backend | `python scripts/export_artifacts.py --source raw --default-cell <model>__<technique> [--rerun-reason "<why>"]` | `artifacts/models/manifest.json`, `feature_reference.json`, `deploy/<id>.joblib` (+ `.calibrator.joblib`; git-ignored), `artifacts/demo/presets.json`, `data/sample/demo_batch.csv`. Deploys `deploy.cells` in experiment.yaml (6 LightGBM + logreg for the default's technique); the team picks the default cell from the CV results, the script never does; run after the test evaluation (recorded in the guard). `--source sample` writes to `artifacts/models/sample/` and `artifacts/demo/sample/` |
-| checks | `ruff check . && pytest -q` | lint and tests (synthetic sample only) |
-| sample run | `python scripts/run_all_sample.py` | every step above on the synthetic sample, into `artifacts/sample/` (experiment cells in quick mode for logreg and LightGBM; no merge; see the script for why) |
-| golden copy | `python scripts/golden.py save`, then `python scripts/golden.py check` after a refactor | `.golden/`; `check` exits 1 if any number moved by more than 1e-9 |
-
-## Backend (FastAPI)
-
-The backend only reads saved artifacts; it never trains. Install and run it from the repository
-root (`requirements-dev.txt` already includes the backend requirements):
-
-```bash
-pip install -e . -r backend/requirements.txt
-USE_EXAMPLE_ARTIFACTS=true uvicorn backend.app.main:app --reload   # PowerShell: $env:USE_EXAMPLE_ARTIFACTS="true"; uvicorn backend.app.main:app --reload
-```
-
-Open <http://localhost:8000/docs> for the interactive docs. Endpoints (under `/api/v1`):
-`GET /health`, `/models`, `/results`, `/eda`, `/presets`; `POST /predict` (one payment, with an
-explanation and every LightGBM technique's score), `POST /predict/batch` (a CSV in a `file` field;
-optional `?model_id=` and `?threshold=`) and `POST /smote-demo` (SMOTE step by step on a toy
-dataset); shapes and error rules in `docs/contracts.md`. The prediction endpoints need the
-exported models, so with example artifacts they answer 503; the SMOTE demo always works.
-
-```bash
-curl -F "file=@data/sample/demo_batch.csv" http://localhost:8000/api/v1/predict/batch   # after the export
-```
-Without `USE_EXAMPLE_ARTIFACTS=true` it reads the real artifacts, and until they all exist
-`/health` reports `"degraded"` with one message per missing file and how to produce it.
-
-| variable | default | purpose |
-|----------|---------|---------|
-| `USE_EXAMPLE_ARTIFACTS` | `false` | serve `docs/contracts/examples/` (fake data, for frontend work); no model file is loaded |
-| `ARTIFACTS_DIR` | `artifacts` | `results/*.json` and `demo/presets.json` |
-| `MODELS_DIR` | `artifacts/models` | `manifest.json` and the model files it lists |
-| `EXAMPLES_DIR` | `docs/contracts/examples` | the example artifacts |
-| `ALLOWED_ORIGINS` | empty | comma-separated CORS origins (`http://localhost:5173` is added in development) |
-| `ENVIRONMENT` | `development` | `production` refuses `*`, an empty origin list and example artifacts |
-| `DEFAULT_MODEL_ID` | manifest's | override the default model (a manifest id) |
-| `MAX_UPLOAD_MB` / `MAX_BATCH_ROWS` | `5` / `10000` | upload limits of `POST /predict/batch` (413 above them) |
-| `LOG_LEVEL` | `INFO` | log level of the `backend` loggers |
-| `RATE_LIMIT_ENABLED` | `true` | slowapi limits per client: 60/min `/predict`, 10/min `/predict/batch`, 30/min `/smote-demo` |
-
-Relative paths resolve from the repository root. Variables may also go in a git-ignored `.env`
-file there. Logs never contain request bodies or feature values (uvicorn's own access log can be
-turned off with `--no-access-log`; the backend writes its own with the request id).
-
-Full setup (experiment, backend, dashboard) will be added as those parts land.
-
----
-
-## Notebook, `model_build/` and project plan (from the `main` branch)
-
-How to run the from-scratch SMOTE notebook in `model_build/`, followed by the `main` branch
-README as written (headings two levels lower), which describes the notebook, `model_build/`
-and the original project plan. Where its setup commands differ from the Quick start above,
-the Quick start matches the current code.
-
-### Running the notebook
-
-The notebook's packages are kept out of the backend and CI requirements:
-
-```bash
-pip install -r requirements-notebook.txt   # from the repo root: project libraries, jupyter, -e ./model_build
-jupyter notebook model_build/src/smote_from_scratch/SMOTE_algo.ipynb
-```
-
-It reads the full dataset from `data/raw/creditcard.csv` (`DATA_PATH` in the notebook).
-
-### An Empirical Study of Class-Imbalance Handling Techniques for Credit Card Fraud Detection
-
-College group project: a **controlled ML experiment** on how class-imbalance treatments affect fraud detection, plus a **small demo web app** for the final presentation.
-
-This repository is the implementation of the architecture in [`docs/ML project discussion.pdf`](docs/ML%20project%20discussion.pdf). Planning notes also live in [`docs/ML_RESEARCH_BLUEPRINT.md`](docs/ML_RESEARCH_BLUEPRINT.md).
-
----
-
-#### Research question
-
-> How do data-level resampling techniques (random oversampling, random undersampling, SMOTE, and hybrid SMOTE + undersampling) and algorithm-level cost-sensitive learning compare against an unmodified baseline for highly imbalanced credit-card fraud detection?
-
-We do **not** optimize for accuracy. Under ~0.17% fraud, a dummy “always legitimate” classifier is already ~99.8% accurate and catches **zero** fraud.
-
-**Primary metric:** PR-AUC (Average Precision).  
-**Secondary metrics:** Precision, Recall, F1, F2, ROC-AUC, FPR, FNR, confusion matrix, ROC and PR curves.
-
-The study does **not** claim a winner in advance. The comparison table from a locked test set is the result.
-
----
-
-#### What we compare
-
-**Models**
-
-| Model | Role |
-|---|---|
-| Logistic Regression | Interpretable linear baseline |
-| Random Forest | Nonlinear bagged trees |
-| LightGBM | Gradient boosting (tabular fraud default) |
-
-**Imbalance treatments**
-
-| ID | Technique | Type |
-|---|---|---|
-| A | None (raw imbalance) | Baseline |
-| B | Random Oversampling (ROS) | Data-level |
-| C | Random Undersampling (RUS) | Data-level |
-| D | SMOTE | Data-level |
-| E | SMOTE + Random Undersampling | Hybrid (Chawla et al.) |
-| F | Class-weighted / `scale_pos_weight` | Algorithm-level |
-
-**Core matrix:** 3 models × 6 treatments = **18 experiments**, same split, same preprocessor, same seeds. The only intended factor that changes per cell is the imbalance method.
-
-Optional stretch: ADASYN, Borderline-SMOTE.
-
----
-
-#### Methodology (non-negotiable)
-
-```
-raw data → validate → EDA → train/test split
-                ↓
-         TRAIN ONLY
-         preprocess (fit on train fold)
-         → resample (fit on train fold only)
-         → model
-         → stratified CV / tuning
-         → threshold from out-of-fold train probabilities
-                ↓
-         TEST (untouched real distribution, once)
-```
-
-- Resampling is **never** applied before the split, and **never** applied to validation or test data.
-- Training uses `imblearn.pipeline.Pipeline` (`preprocess → sampler → clf`).
-- Inference uses a sklearn pipeline with **preprocessor + model only**. SMOTE is a training-time operation.
-- Features are scaled **before** SMOTE so Euclidean *k*-NN is not dominated by `Amount` or `Time`.
-- Default SMOTE/ROS strategy is **moderate** (not 1:1). Full balance on ~228k majority rows is avoided.
-
-Inspiration: N. V. Chawla, K. W. Bowyer, L. O. Hall, W. P. Kegelmeyer, *SMOTE: Synthetic Minority Over-sampling Technique*, JAIR 16, 2002. Evaluation is modernized (PR-AUC primary, boosting models, leak-free pipelines).
-
----
-
-#### Dataset
-
-Working assumption until verified: [ULB / Kaggle European credit-card fraud dataset](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud)
-
-| Column | Meaning |
-|---|---|
-| `Time` | Seconds from the first transaction in the dump |
-| `V1`–`V28` | PCA components (anonymized) |
-| `Amount` | Transaction amount |
-| `Class` | `0` legitimate, `1` fraud |
-
-Typical size: 284,807 rows, ~492 frauds (~0.172%).
-
-Place the CSV at `data/raw/creditcard.csv` (gitignored). Record SHA-256 in `data/README.md` when the file is obtained.
-
-A **synthetic schema-identical sample** (Prompt 01) is generated so the team can develop without the full file.
-
-**Do not commit** the full raw dataset or any real cardholder PII. The demo must never collect PAN, CVV, or names.
-
----
-
-#### Repository layout (target)
+## Folder map
 
 ```text
-ML_Project2026/
-├── configs/                 # dataset.yaml, experiment.yaml
-├── data/
-│   ├── raw/                 # gitignored full CSV
-│   └── sample/              # small synthetic/dev CSV
-├── src/                     # reusable ML code
-│   ├── data/                # load, validate, split
-│   ├── preprocessing/
-│   ├── sampling/            # ROS, RUS, SMOTE, SMOTE+RUS
-│   ├── models/
-│   ├── evaluation/
-│   └── utils/
-├── scripts/                 # CLI: synthetic data, EDA, experiments
-├── notebooks/               # thin exploration only
-├── artifacts/               # metrics, figures, serialized models
-├── backend/                 # FastAPI demo API
-├── frontend/                # React + Vite dashboard
-├── tests/                   # including anti-leakage tests
-├── docs/
-├── model_build/             # existing from-scratch SMOTE (to be migrated)
-├── pyproject.toml
-└── README.md
+data/raw/creditcard.csv          the real dataset (Git-ignored; download it from Kaggle)
+data/sample/                     small fake copy with the same columns, for tests and trial runs
+model_build/                     our from-scratch SMOTE (a teammate's code and notebook)
+src/fraudstudy/__init__.py       marks fraudstudy as a package
+src/fraudstudy/data.py           load, check, remove duplicates, split 70/30
+src/fraudstudy/experiments.py    preprocessing, the 6 techniques, the 3 models, tuning, cross-validation
+src/fraudstudy/evaluation.py     the one-time test-set evaluation, metrics, confidence intervals, significance tests, figures
+notebooks/01_eda.ipynb           exploration and the EDA figures
+artifacts/figures/               saved figures (eda_*.png from the notebook, the rest from evaluation.py)
+artifacts/metrics/               saved results (eda_summary.json, cells/*.json, test_results.json, stats.json, ...)
+artifacts/models/                trained pipelines (only lightgbm__*.joblib are committed, for the app)
+artifacts/sample/                results of trial runs on the fake sample (Git-ignored)
+tests/test_no_leakage.py         proves no validation or test row reaches training
+tests/test_smote.py              checks our from-scratch SMOTE against imblearn
+app.py                           the Streamlit presentation app (added in the next step)
+requirements.txt                 every library, pinned to an exact version
+pyproject.toml                   makes src/fraudstudy installable and holds the pytest settings
+CLAUDE.md                        rules for coding sessions in this repository
+LICENSE                          MIT licence
 ```
 
-Reusable logic lives in `src/`. Notebooks must not contain the training loop. The web app consumes **saved artifacts**; it does not retrain models.
+## How to run
 
----
-
-#### Status
-
-**Early / Week 1.** Scaffolding, data contracts, synthetic generator, validation, split, and EDA come first. The 18-run matrix is Week 4. FastAPI + React start after model artifacts exist (Week 5).
-
-Current tree still includes `model_build/` (from-scratch SMOTE). That sampler currently balances to 1:1 and must gain `sampling_strategy` before matrix runs.
-
----
-
-#### Setup (once the package exists)
+Run everything from the repository root, in this order.
 
 ```bash
-git clone https://github.com/RavenKing45/ML_Project2026.git
-cd ML_Project2026
-
+# 1. Create a virtual environment and install everything (Python 3.11 or newer)
 python -m venv .venv
-# Windows
-.venv\Scripts\activate
-# macOS / Linux
-# source .venv/bin/activate
+source .venv/bin/activate              # Windows: .venv\Scripts\activate
+pip install -r requirements.txt        # also installs src/fraudstudy and model_build/ (the "-e" lines)
+pip install notebook                   # only if you want to open the notebooks
 
-pip install -e ".[dev]"
+# 2. Download creditcard.csv from https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud,
+#    unzip it and put it at data/raw/creditcard.csv
+
+# 3. Check the data: prints rows, frauds, duplicates removed and the train/test sizes
+python -m fraudstudy.data
+
+# 4. EDA: open notebooks/01_eda.ipynb and run all cells (Kernel > Restart & Run All).
+#    It writes artifacts/figures/eda_*.png and artifacts/metrics/eda_summary.json.
+jupyter notebook notebooks/01_eda.ipynb
+
+# 5. The experiment: tunes and cross-validates all 18 cells on the TRAINING rows only.
+#    Finished cells are skipped, so you can stop and restart; --force re-runs them.
+python -m fraudstudy.experiments
+
+# 6. The one-time test-set evaluation. The team picks the default cell (the one the app shows
+#    first) from the CV PR-AUC printed in step 5, never from test results.
+python -m fraudstudy.evaluation --test --default-cell <model>__<technique>   # e.g. lightgbm__smote
+
+# 7. Significance tests and the report figures
+python -m fraudstudy.evaluation --stats --figures
+
+# 8. Tests (they use the fake sample only, under a minute)
+pytest -q
+
+# 9. The app
+streamlit run app.py
 ```
 
-Generate a small development dataset (unblocks the whole team):
+Step 6 writes a guard file (`artifacts/metrics/TEST_SET_OPENED.json`). Running `--test` a second
+time is refused unless you add `--rerun-reason "<why>"`, and that reason is logged. Never change a
+tuned setting because of test results.
+
+**Splitting the experiment across laptops.** The 18 cells are independent, so each person can run
+some of them, e.g. one model each:
 
 ```bash
-python scripts/generate_synthetic_data.py
+python -m fraudstudy.experiments --models logreg          # laptop 1
+python -m fraudstudy.experiments --models random_forest   # laptop 2
+python -m fraudstudy.experiments --models lightgbm        # laptop 3
 ```
 
-Validate and split:
+Use the same code version and `requirements.txt` on every laptop (and either all or none with
+`--quick`). Then copy each laptop's `artifacts/metrics/cells/*.json` and `artifacts/models/*.joblib`
+into the same folders on one machine and run steps 6 and 7 there. The splits and folds come only
+from the seed, so the cells line up fold by fold.
+
+### Trial run without the real data
+
+The same steps on the fake sample (`--source sample --quick`). Everything goes to
+`artifacts/sample/`, which is Git-ignored, so a trial never touches the real results. It takes
+about 3 minutes; random forest is the slow part, so add `--models logreg lightgbm` to step 5 for a
+1-minute run.
 
 ```bash
-python scripts/run_eda.py
-pytest tests/test_data_and_split.py
+python -m fraudstudy.data --source sample
+# notebook: set SOURCE = "sample" in its first code cell, then run all cells
+python -m fraudstudy.experiments --source sample --quick
+python -m fraudstudy.evaluation --source sample --test --default-cell lightgbm__baseline
+python -m fraudstudy.evaluation --source sample --stats --figures
+pytest -q
 ```
 
-Run the experiment matrix (after Waves 1–2):
+**About `data/sample/`:** `creditcard_synthetic.csv` is fake data with the same 31 columns as the
+real file (6,000 rows, 1.5% fraud). It was made by an earlier version of our code, so that the
+tests and trial runs work without the real dataset. Its numbers mean nothing; never report them.
 
-```bash
-python scripts/run_experiments.py --quick
-```
+## Design decisions
 
-Full 18-run study (CPU, overnight-class):
-
-```bash
-python scripts/run_experiments.py
-```
-
-Tests:
-
-```bash
-pytest
-```
-
-Commands above match the planned CLI. They will fail until the corresponding prompts are implemented — that is expected.
-
----
-
-#### Demo application (later)
-
-After models are serialized:
-
-1. **Overview** — problem, imbalance, headline metrics  
-2. **Comparison** — 18-run table, ROC / PR charts  
-3. **SMOTE lab** — 2D interpolation illustration  
-4. **Predict** — sample transactions or CSV batch (anonymized features only)
-
-Stack: FastAPI + React / Vite / Tailwind. Frontend contains **no** ML logic.
-
----
-
-#### Team (10 students, 5 squads)
-
-| Squad | Owns | Branch prefix |
-|---|---|---|
-| 1 | Data, schema, EDA, synthetic generator |
-| 2 | Preprocessing, ROS/RUS/SMOTE | 
-| 3 | Models, CV, experiments | 
-| 4 | Metrics, FastAPI | 
-| 5 | React UI, Docker, deploy | 
-
-Workflow: feature branches → `develop` (PR + review) → `main`. Do not push to `main` directly.
-
-Implementation order is in the discussion PDF (Prompts 01–25) and summarized as:
-
-1. Repo + configs + synthetic data  
-2. Load / validate / split  
-3. EDA  
-4. Preprocessor  
-5. Baselines  
-6–9. ROS → RUS → SMOTE → SMOTE+RUS  
-10. CV + leakage tests  
-11–13. Metrics, 18-run runner, serialize  
-14–21. API + UI  
-22–25. Docker, tests, deploy, docs  
-
----
-
-#### Tech stack
-
-| Layer | Choice |
+| Decision | Why |
 |---|---|
-| ML | Python, pandas, scikit-learn, imbalanced-learn, LightGBM |
-| Tracking | JSON + CSV under `artifacts/` (no MLflow server) |
-| API | FastAPI, Pydantic |
-| UI | React, TypeScript, Vite, Tailwind, Recharts |
-| Deploy (demo) | Docker; frontend Vercel; API Render / Hugging Face Spaces |
+| Every resampler runs inside an `imblearn.pipeline.Pipeline`, only during `fit`, after the split | Resampling before the split or outside the CV folds leaks copied or synthetic frauds into validation data and inflates the scores |
+| Primary metric is average precision (PR-AUC); never accuracy | With 0.17% frauds, accuracy and ROC-AUC are dominated by the legit class; PR-AUC measures how well frauds are found |
+| 70/30 stratified train/test split with one seed (`SEED` in `data.py`) | Keeps about 140 frauds in the test set and the same fraud rate in both parts; one seed makes every run repeatable |
+| Exact duplicate rows are removed before the split | A copy in train and one in test would test the model on a row it learned |
+| Raw `Time` is not a model feature | It counts seconds inside one two-day file, so it describes when the data was collected, not new payments |
+| Outliers are kept | Frauds are often the extreme values; removing outliers would remove the signal |
+| log1p(Amount), then `RobustScaler` on every column, inside the pipeline | Amount is very skewed (skewness 17); the median/IQR scaler is not pulled around by extreme values and learns from training rows only |
+| The same ratio grid and the same tuning budget (`N_ITER`) for every technique | A fair comparison: no technique gets more search effort or a better ratio range |
+| Class weighting maps each ratio r to the fraud weight r / base ratio | Then F reaches the same class balance a sampler at ratio r would, so the grids are comparable |
+| One F1 threshold per cell, chosen on out-of-fold training scores | The test set never picks a threshold; one threshold is enough to explain and compare |
+| The test set is opened once, behind a guard file | Every extra look at the test set biases the final estimate |
+| Models: logistic regression, random forest, LightGBM | A linear model, a bagged and a boosted tree ensemble react differently to resampling and weights |
+| Repeated stratified CV with the same seed for every cell; Wilcoxon vs baseline with Holm, plus a Friedman test per model | Every cell gets the same folds, so techniques can be compared fold by fold; Holm corrects for 5 tests per model |
+| PR-AUC 95% confidence intervals by stratified bootstrap (1,000 resamples) | Shows how uncertain a test score is with only about 140 test frauds |
+| Settings live in a SETTINGS block at the top of each file, not in YAML configs | One place per job that everyone can read; the YAML loading was a layer nobody needed |
+| All research code in three files: `data.py`, `experiments.py`, `evaluation.py` | Each step is one `python -m fraudstudy.<file>` command and every member can explain every line |
+| One Streamlit app (`app.py`) instead of a FastAPI backend and a React dashboard | One small Python file is enough to present saved results; no API contracts to maintain |
+| `statsmodels` added | Its `multipletests` does the Holm correction, instead of our own code |
+| `streamlit` added | Runs the presentation app |
+| One `requirements.txt` with exact versions, including pytest and the two `-e` installs | Everyone gets the same versions with one command; Jupyter is installed separately because only notebook users need it |
+| Only the LightGBM pipelines are committed (`artifacts/models/lightgbm__*.joblib`) | The app needs them and each is about 2.4 MB; the other models stay local |
+| The EDA is a notebook (`notebooks/01_eda.ipynb`) committed with its outputs | GitHub shows the plots, and each step is explained next to its code |
+| Cut: probability calibration (isotonic calibrators) | Only the old backend used them; PR-AUC and the F1 threshold do not depend on calibration |
+| Cut: the F2 threshold (F2 is still reported at the F1 threshold) | One tuned threshold per cell is enough |
+| Cut: the temporal-split sensitivity check | A side analysis outside the main question, and it re-read test rows outside the single evaluation |
+| Cut: the Nemenyi critical difference, CD diagrams, the pooled Friedman test and `findings.md` | Wilcoxon with Holm plus one Friedman test per model answer the question |
+| Cut: the export manifest, the deploy folder and every SHA-256 check | They protected the FastAPI deployment; the split is fixed by the seed |
+| Cut: batch CSV scoring and the demo batch | Only the FastAPI backend served them |
+| Cut: `backend/` (FastAPI), `frontend/` (React), the JSON contracts and pyyaml, pydantic, fastapi, uvicorn, slowapi, python-multipart | The Streamlit app replaces them |
+| Cut: `scripts/`, the resampling-audit and baseline scripts, `artifacts/results/` and `artifacts/demo/` | Each step is now `python -m fraudstudy.<file>`; the training counts before and after resampling are saved in each cell file |
+| Cut: the synthetic-data generator; `data/sample/` is kept as it is | The sample only needs to exist, not to be regenerated |
+| Cut: ROC-AUC confidence interval, MCC, metrics at threshold 0.5 and the confusion-matrix, ROC, threshold-effect and fold-boxplot figures | The report needs PR-AUC with its CI, metrics at the tuned threshold, PR curves and the training counts |
+| Cut: the optional hour-of-day feature | Never part of the main experiment, and it assumed Time = 0 is midnight |
+| Cut: `eda.py` and `run_eda.py` | Replaced by the EDA notebook |
+| Cut: `requirements-dev.txt`, `requirements-notebook.txt`, ruff and its settings | One requirements file is simpler; the linter only ran in the CI, which is cut too |
+| Cut: `.github/` (CI), `.gitattributes`, `docs/` and the empty `.gitkeep` files | The tests run locally with `pytest -q`; the decisions are in this table and the master guide lives in the team document |
 
----
+## Results
 
-#### Limitations (we will state these in the report)
+Filled in after the test-set evaluation on the real data.
 
-- SMOTE samples are interpolations in PCA space, not real frauds.
-- Public, anonymized, ~48-hour 2013 European dump; no merchant/velocity features.
-- Offline metrics are not a bank production cost matrix.
-- Concept drift and adversarial fraud are out of scope.
+<!-- RESULTS:START -->
+| Model | Technique | CV PR-AUC | Test PR-AUC (95% CI) | Precision | Recall | F1 threshold |
+|---|---|---|---|---|---|---|
+<!-- RESULTS:END -->
 
----
+## Limitations
 
-#### License and data
-MIT License
+- The data is one public, anonymised two-day dump of European card payments from 2013. V1..V28
+  are PCA components, so we cannot explain them in business terms or add features such as the
+  merchant or the customer's history.
+- SMOTE's new frauds are interpolations in PCA space, not real frauds.
+- With about 140 frauds in the test set, the test scores are uncertain; the confidence intervals
+  show how much.
+- Fold scores share training rows, so the p-values of the significance tests are approximate.
+- Offline metrics are not a bank's real costs, and concept drift and fraudsters adapting to the
+  model are out of scope.
 
-Copyright (c) 2026 Pragna Jyoti Mandal
+## Citations
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+- A. Dal Pozzolo, O. Caelen, R. A. Johnson and G. Bontempi, "Calibrating Probability with
+  Undersampling for Unbalanced Classification", IEEE Symposium Series on Computational
+  Intelligence and Data Mining (CIDM), 2015. (The dataset.)
+- N. V. Chawla, K. W. Bowyer, L. O. Hall and W. P. Kegelmeyer, "SMOTE: Synthetic Minority
+  Over-sampling Technique", Journal of Artificial Intelligence Research 16, 321-357, 2002.
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+## Licence
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+The code is under the MIT licence (see `LICENSE`). The credit-card dataset is not included in
+this repository; download it from Kaggle and follow its terms.
 
-Code in this repo is for academic use. The credit-card CSV is **not** redistributed here; obtain it from the dataset provider and respect their terms.
+## Team
+
+Shaurya Agarwal, Pragna Jyoti Mandal, Utkarsh Gupta, Ayush, Aditi.
+<!-- TODO: complete the list with every member's full name and part of the project. -->

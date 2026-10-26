@@ -8,18 +8,25 @@ F class weighting) on 3 models (logistic regression, random forest, LightGBM) us
 credit-card dataset, without data leakage, and show the results in one Streamlit app.
 
 ## Where things are (the final layout: do not add folders or files unless the task says so)
-data/raw/creditcard.csv         the real dataset (Git-ignored; download from Kaggle)
-data/sample/                    small fake copy with the same columns, for tests and quick runs
-model_build/                    our from-scratch SMOTE (a teammate's code: change only when asked)
-src/fraudstudy/data.py          load, check, remove duplicates, split 70/30
-src/fraudstudy/experiments.py   preprocessing, the 6 techniques, the 3 models, tuning, cross-validation
-src/fraudstudy/evaluation.py    the one-time test-set evaluation, metrics, confidence intervals,
-                                significance tests, figures
-notebooks/01_eda.ipynb          exploration and EDA figures
-artifacts/metrics, figures, models   saved results (sample runs go to artifacts/sample/, Git-ignored)
+data/raw/creditcard.csv          the real dataset (Git-ignored; download from Kaggle)
+data/sample/creditcard_synthetic.csv   small fake copy with the same columns, for tests and quick runs
+model_build/                     our from-scratch SMOTE (a teammate's code: change only when asked)
+src/fraudstudy/__init__.py       marks fraudstudy as a package
+src/fraudstudy/data.py           load, check, remove duplicates, split 70/30
+src/fraudstudy/experiments.py    preprocessing, the 6 techniques, the 3 models, tuning, cross-validation
+src/fraudstudy/evaluation.py     the one-time test-set evaluation, metrics, confidence intervals,
+                                 significance tests, figures
+notebooks/01_eda.ipynb           exploration; writes artifacts/figures/eda_*.png and
+                                 artifacts/metrics/eda_summary.json
+artifacts/figures/               saved figures
+artifacts/metrics/               saved results (cells/*.json, test_results.json, stats.json, ...)
+artifacts/models/                trained pipelines; only lightgbm__*.joblib are committed (each under 10 MB)
+artifacts/sample/                output of runs on the fake sample (Git-ignored)
 tests/test_no_leakage.py, tests/test_smote.py
-app.py                          the Streamlit presentation app
-requirements.txt, pyproject.toml, README.md, CLAUDE.md, .gitignore, LICENSE
+app.py                           the Streamlit presentation app (comes in P3)
+README.md                        front page: how to run, design decisions, results
+requirements.txt                 every library pinned, plus -e . and -e ./model_build
+pyproject.toml, CLAUDE.md, .gitignore, LICENSE
 
 ## Simple enough to explain (the rule above all the others)
 Our examiner opens any file and asks any of us to explain any line. So:

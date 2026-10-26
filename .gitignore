@@ -1,53 +1,21 @@
-# Python
-__pycache__/
-*.py[cod]
-.venv/
-venv/
-
-# Data
-# data/raw/* ignores everything main's `data/raw/` ignored, but keeps data/raw/.gitkeep
-# trackable (git cannot re-include a file inside an ignored folder).
+# The real dataset is never committed (download it from Kaggle); the .gitkeep keeps the folder.
 data/raw/*
 !data/raw/.gitkeep
-data/processed/
 
-# Generated model files
-*.joblib
-*.pkl
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Python tooling
-*.egg-info/
-.eggs/
-build/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
-.coverage
-htmlcov/
-
-# Environment files
-.env
-.env.*
-
-# Node
-node_modules/
-dist/
-npm-debug.log*
-yarn-error.log*
-
-# Large artifacts
-artifacts/models/*.joblib
-
-# OS / editor
-.DS_Store
-Thumbs.db
-.vscode/
-.idea/
-
-# Golden copies of an earlier refactor check, and the output of runs on the fake sample
-.golden/
-.golden_before/
+# Outputs of trial runs on the fake sample
 artifacts/sample/
+
+# Trained pipelines stay local, except the LightGBM ones the app loads (each about 2.4 MB)
+artifacts/models/*
+!artifacts/models/.gitkeep
+!artifacts/models/lightgbm__*.joblib
+
+# Python, pip install -e and Jupyter leftovers
+.venv/
+__pycache__/
+*.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Secrets
+.env
