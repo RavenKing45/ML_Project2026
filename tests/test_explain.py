@@ -14,7 +14,6 @@ from imblearn.under_sampling import RandomUnderSampler
 
 from fraudstudy.contracts import Explanation
 from fraudstudy.data import deduplicate, load_dataset, split_dataset
-from fraudstudy.errors import ConfigError, DataValidationError
 from fraudstudy.experiment import Configs
 from fraudstudy.explain import (
     METHOD_LINEAR,
@@ -52,7 +51,7 @@ def fitted(test_cfgs: Configs) -> Fitted:
     cfg, exp = test_cfgs.dataset, test_cfgs.experiment
     df, _ = deduplicate(load_dataset("sample", cfg=cfg), target=cfg["target"])
     split = split_dataset(df, cfg, exp)
-    X, y = split.X_train, split.y_train
+    X, y = split["X_train"], split["y_train"]
     logreg = build_pipeline(
         "logreg", "smote", {"max_iter": 2000}, {"sampling_strategy": 0.1}, cfg, exp
     ).fit(X, y)
@@ -67,7 +66,7 @@ def fitted(test_cfgs: Configs) -> Fitted:
     reference = build_feature_reference(
         logreg.named_steps["preprocess"], X, y, source="sample", data_sha256=None, train_sha256="x"
     )
-    return Fitted(X, y, split.X_test, logreg, lightgbm, reference)
+    return Fitted(X, y, split["X_test"], logreg, lightgbm, reference)
 
 
 # --- additivity -----------------------------------------------------------------------------------
@@ -203,24 +202,24 @@ def test_random_forest_is_not_explained(fitted: Fitted, test_cfgs: Configs) -> N
         cfg=test_cfgs.dataset,
         exp_cfg=test_cfgs.experiment,
     ).fit(fitted.X_train, fitted.y_train)
-    with pytest.raises(ConfigError, match="shap"):
+    with pytest.raises(ValueError, match="shap"):
         explain(rf, fitted.X_test.iloc[[0]], fitted.reference)
 
 
 def test_explain_input_errors(fitted: Fitted) -> None:
     ref = fitted.reference
-    with pytest.raises(DataValidationError, match="exactly one row"):
+    with pytest.raises(ValueError, match="exactly one row"):
         explain(fitted.logreg, fitted.X_test.iloc[:2], ref)
-    with pytest.raises(DataValidationError, match="V14"):
+    with pytest.raises(ValueError, match="V14"):
         explain(fitted.logreg, fitted.X_test.iloc[[0]].drop(columns="V14"), ref)
     nan_row = fitted.X_test.iloc[[0]].copy()
     nan_row["V3"] = np.nan
-    with pytest.raises(DataValidationError, match="finite"):
+    with pytest.raises(ValueError, match="finite"):
         explain(fitted.logreg, nan_row, ref)
-    with pytest.raises(ConfigError, match="top_k"):
+    with pytest.raises(ValueError, match="top_k"):
         explain(fitted.logreg, fitted.X_test.iloc[[0]], ref, top_k=0)
     short = ref.model_copy(update={"features": ref.features[:-1]})
-    with pytest.raises(DataValidationError, match="feature_reference.json"):
+    with pytest.raises(ValueError, match="feature_reference.json"):
         explain(fitted.logreg, fitted.X_test.iloc[[0]], short)
 
 
@@ -252,7 +251,7 @@ def test_reference_ranges_are_percentiles_of_all_training_rows(fitted: Fitted) -
 
 @pytest.mark.parametrize("bad", [[99.9, 0.1], [0.0, 100.5], [-1.0, 50.0], [5.0], [1.0, 1.0]])
 def test_range_percentiles_are_checked(bad: list[float]) -> None:
-    with pytest.raises(ConfigError, match="Range percentiles"):
+    with pytest.raises(ValueError, match="Range percentiles"):
         check_range_percentiles(bad)
 
 

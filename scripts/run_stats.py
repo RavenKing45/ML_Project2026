@@ -23,15 +23,13 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from fraudstudy.config import get_experiment_config
+from fraudstudy.config import get_experiment_config, resolve
 from fraudstudy.contracts import ComparisonTable, StatsResult
-from fraudstudy.errors import FraudStudyError
 from fraudstudy.evaluation.figures import FIGURE_NAMES, figures_dir_for
 from fraudstudy.evaluation.stats import compute_stats, existing_interpretation, findings_markdown
 from fraudstudy.experiment.results import source_fold_scores
 from fraudstudy.experiment.test_eval import COMPARISON_FILE, DATASET_SOURCE, output_dir_for
 from fraudstudy.io import load_json, save_json
-from fraudstudy.paths import resolve
 
 RESULTS_DIR = "artifacts/results"
 FINDINGS_FILE = "docs/findings.md"
@@ -132,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         out = run(args.source, args.results_dir, args.output_dir, args.findings, args.figures_dir)
-    except FraudStudyError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     for f in out.result.friedman:

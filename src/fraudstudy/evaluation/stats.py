@@ -39,7 +39,6 @@ from fraudstudy.contracts import (
     PairwiseTest,
     StatsResult,
 )
-from fraudstudy.errors import DataValidationError
 
 BASELINE = "baseline"
 METRIC_COLUMN = "pr_auc"
@@ -74,31 +73,31 @@ def paired_scores(
         A DataFrame indexed by ``(repeat, fold)`` with one column per technique present.
 
     Raises:
-        DataValidationError: If the model has no rows, a block is missing for some technique, a
+        ValueError: If the model has no rows, a block is missing for some technique, a
             ``(repeat, fold)`` appears twice, or the techniques were scored on different folds
             (different ``fold_id``), which would break the pairing.
     """
     rows = fold_scores[fold_scores["model"] == model]
     present = [t for t in techniques if t in set(rows["technique"])]
     if not present:
-        raise DataValidationError(f"No fold scores for model '{model}'; run its cells first.")
+        raise ValueError(f"No fold scores for model '{model}'; run its cells first.")
     rows = rows[rows["technique"].isin(present)]
     if rows.duplicated(["technique", *BLOCK_KEY]).any():
-        raise DataValidationError(
+        raise ValueError(
             f"Duplicate (technique, repeat, fold) rows for model '{model}' in fold scores; "
             "re-run scripts/merge_results.py."
         )
     if "fold_id" in rows.columns:
         ids = rows.groupby(BLOCK_KEY)["fold_id"].nunique()
         if (ids > 1).any():
-            raise DataValidationError(
+            raise ValueError(
                 f"Techniques of model '{model}' were scored on different folds (fold_id differs "
                 f"at {list(ids[ids > 1].index)[:3]}); the paired tests need identical folds."
             )
     table = rows.pivot(index=BLOCK_KEY, columns="technique", values=metric)[present]
     if table.isna().any().any():
         missing = table.columns[table.isna().any()].tolist()
-        raise DataValidationError(
+        raise ValueError(
             f"Model '{model}': techniques {missing} lack scores for some (repeat, fold) blocks; "
             "every cell must use the same repeated-CV protocol."
         )
@@ -141,11 +140,11 @@ def wilcoxon_paired(a: Sequence[float], b: Sequence[float]) -> dict[str, Any]:
         ``n_pairs``. If every difference is zero: ``statistic = 0``, ``p_value = 1``.
 
     Raises:
-        DataValidationError: If the inputs differ in length or are empty.
+        ValueError: If the inputs differ in length or are empty.
     """
     a_arr, b_arr = np.asarray(a, dtype=float), np.asarray(b, dtype=float)
     if a_arr.shape != b_arr.shape or a_arr.size == 0:
-        raise DataValidationError(
+        raise ValueError(
             f"Paired test needs two equal-length, non-empty score lists; got {a_arr.size} and "
             f"{b_arr.size}."
         )
@@ -189,10 +188,10 @@ def compare_to_baseline(
         One :class:`PairwiseTest` per non-baseline technique, in column order.
 
     Raises:
-        DataValidationError: If ``baseline`` is not a column of ``table``.
+        ValueError: If ``baseline`` is not a column of ``table``.
     """
     if baseline not in table.columns:
-        raise DataValidationError(
+        raise ValueError(
             f"Model '{model}' has no '{baseline}' fold scores; the baseline cell must be run."
         )
     others = [t for t in table.columns if t != baseline]
@@ -244,11 +243,11 @@ def friedman(table: pd.DataFrame) -> tuple[float, float]:
         ``(statistic, p_value)``; ``(0.0, 1.0)`` when every block is a complete tie.
 
     Raises:
-        DataValidationError: If there are fewer than 2 blocks or 3 techniques.
+        ValueError: If there are fewer than 2 blocks or 3 techniques.
     """
     n, k = table.shape
     if n < 2 or k < MIN_TECHNIQUES_FRIEDMAN:
-        raise DataValidationError(
+        raise ValueError(
             f"Friedman test needs >= 2 blocks and >= {MIN_TECHNIQUES_FRIEDMAN} techniques; "
             f"got {n} blocks and {k} techniques."
         )
@@ -290,10 +289,10 @@ def critical_difference(k: int, n_blocks: int, alpha: float) -> float:
         The CD in average-rank units (about 1.95 for k = 6, N = 15, alpha = 0.05).
 
     Raises:
-        DataValidationError: If ``k < 2`` or ``n_blocks < 1``.
+        ValueError: If ``k < 2`` or ``n_blocks < 1``.
     """
     if k < 2 or n_blocks < 1:
-        raise DataValidationError(f"CD needs k >= 2 and N >= 1; got k={k}, N={n_blocks}.")
+        raise ValueError(f"CD needs k >= 2 and N >= 1; got k={k}, N={n_blocks}.")
     return nemenyi_q(k, alpha) * float(np.sqrt(k * (k + 1) / (6.0 * n_blocks)))
 
 
@@ -347,11 +346,11 @@ def compute_stats(
         A validated :class:`StatsResult`.
 
     Raises:
-        DataValidationError: If no model has fold scores, or a model's pairing is broken.
+        ValueError: If no model has fold scores, or a model's pairing is broken.
     """
     present = [m for m in models if (fold_scores["model"] == m).any()]
     if not present:
-        raise DataValidationError(
+        raise ValueError(
             "fold_scores.csv has no rows for the configured models; run scripts/run_experiments.py."
         )
     pairwise: list[PairwiseTest] = []

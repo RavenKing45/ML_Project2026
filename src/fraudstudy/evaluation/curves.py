@@ -17,7 +17,6 @@ from fraudstudy.contracts import (
     TechniqueId,
     ThresholdTable,
 )
-from fraudstudy.errors import DataValidationError
 from fraudstudy.evaluation.metrics import check_inputs
 
 MIN_CURVE_POINTS = 2  # both endpoints
@@ -58,7 +57,7 @@ def threshold_table(
         A validated ``ThresholdTable``.
 
     Raises:
-        DataValidationError: If the inputs are invalid or ``max_points`` is out of range.
+        ValueError: If the inputs are invalid or ``max_points`` is out of range.
     """
     _check_max_points(max_points)
     y, s = _check_unit_scores(y_true, scores)
@@ -101,7 +100,7 @@ def make_curves(
         A validated ``Curves`` object.
 
     Raises:
-        DataValidationError: If the inputs are invalid or ``max_points`` is out of range.
+        ValueError: If the inputs are invalid or ``max_points`` is out of range.
     """
     _check_max_points(max_points)
     y, s = _check_unit_scores(y_true, scores)
@@ -120,9 +119,9 @@ def make_curves(
 
 
 def _check_max_points(max_points: int) -> None:
-    """Raise ``DataValidationError`` unless ``max_points`` is in [2, MAX_CURVE_POINTS]."""
+    """Raise ``ValueError`` unless ``max_points`` is in [2, MAX_CURVE_POINTS]."""
     if not MIN_CURVE_POINTS <= max_points <= MAX_CURVE_POINTS:
-        raise DataValidationError(
+        raise ValueError(
             f"max_points must be between {MIN_CURVE_POINTS} and {MAX_CURVE_POINTS} "
             f"(the curves.json contract limit); got {max_points}."
         )
@@ -132,7 +131,7 @@ def _check_unit_scores(y_true: object, scores: object) -> tuple[np.ndarray, np.n
     """Validate inputs and require scores in [0, 1] (thresholds are stored as probabilities)."""
     y, s = check_inputs(y_true, scores)
     if s.min() < 0.0 or s.max() > 1.0:
-        raise DataValidationError(
+        raise ValueError(
             f"Curves need scores in [0, 1]; got range [{s.min()}, {s.max()}]. "
             "Pass predict_proba(...)[:, 1]."
         )

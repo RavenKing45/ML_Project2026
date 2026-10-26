@@ -21,6 +21,7 @@ import joblib
 import pandas as pd
 
 from backend.app.settings import Settings
+from fraudstudy.config import PROJECT_ROOT
 from fraudstudy.contracts import (
     MODEL_LABELS,
     TECHNIQUE_LABELS,
@@ -44,7 +45,6 @@ from fraudstudy.export import (
     pick_presets,
 )
 from fraudstudy.io import save_json, sha256_file
-from fraudstudy.paths import PROJECT_ROOT
 from fraudstudy.pipeline import build_pipeline
 
 EXAMPLES = PROJECT_ROOT / "docs" / "contracts" / "examples"
@@ -158,7 +158,7 @@ def build_real_artifacts(root: Path, cfgs: Configs) -> RealArtifacts:
 
     df, _ = deduplicate(load_dataset("sample", cfg=cfg), target=cfg["target"])
     split = split_dataset(df, cfg, exp)
-    X, y = split.X_train, split.y_train
+    X, y = split["X_train"], split["y_train"]
     pipelines = _fit_cells(cfgs, X, y)
     entries: list[ManifestEntry] = []
     calibrators: dict[str, Any] = {}
@@ -180,11 +180,11 @@ def build_real_artifacts(root: Path, cfgs: Configs) -> RealArtifacts:
     save_json(reference.model_dump(mode="json"), models / FEATURE_REFERENCE_FILE)
 
     settings = deploy_settings(exp, DEFAULT_ID)
-    test_rows = df.loc[split.X_test.index]
+    test_rows = df.loc[split["X_test"].index]
     default_entry = next(e for e in entries if e.id == DEFAULT_ID)
     presets, _ = pick_presets(
         test_rows,
-        pipelines[DEFAULT_ID].predict_proba(split.X_test)[:, 1],
+        pipelines[DEFAULT_ID].predict_proba(split["X_test"])[:, 1],
         default_entry.threshold_f1,
         settings.presets,
         DEFAULT_ID,

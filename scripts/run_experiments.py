@@ -22,9 +22,8 @@ import logging
 import sys
 from pathlib import Path
 
-from fraudstudy.errors import FraudStudyError
+from fraudstudy.config import resolve
 from fraudstudy.experiment import Configs, run_experiments
-from fraudstudy.paths import resolve
 
 RESULTS_DIR = "artifacts/results"
 MODELS_DIR = "artifacts/models"
@@ -67,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
             cfgs=cfgs,
             log=lambda line: print(line, flush=True),
         )
-    except FraudStudyError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

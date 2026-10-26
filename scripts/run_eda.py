@@ -13,13 +13,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from fraudstudy.config import get_dataset_config
+from fraudstudy.config import get_dataset_config, resolve
 from fraudstudy.contracts import EdaSummary
 from fraudstudy.data import deduplicate, load_dataset
 from fraudstudy.eda import compute_eda_summary, make_eda_figures
-from fraudstudy.errors import FraudStudyError
 from fraudstudy.io import save_json, sha256_file
-from fraudstudy.paths import resolve
 
 RESULTS_DIR = "artifacts/results"
 FIGURES_DIR = "artifacts/figures"
@@ -96,7 +94,7 @@ def main(argv: list[str] | None = None) -> int:
                 resolve(cfg["raw_path" if args.source == "raw" else "sample_path"])
             ),
         )
-    except FraudStudyError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

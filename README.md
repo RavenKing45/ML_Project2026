@@ -31,6 +31,8 @@ for development only).
 | report figures | `python scripts/make_figures.py --source raw` | PR / ROC curves, PR-AUC with CIs, confusion matrices, threshold effect, CD diagrams, resampling counts, fold-score box plots in `artifacts/figures/` (`artifacts/figures/sample/` for the sample); then re-run `run_stats.py` to link them |
 | export for the backend | `python scripts/export_artifacts.py --source raw --default-cell <model>__<technique> [--rerun-reason "<why>"]` | `artifacts/models/manifest.json`, `feature_reference.json`, `deploy/<id>.joblib` (+ `.calibrator.joblib`; git-ignored), `artifacts/demo/presets.json`, `data/sample/demo_batch.csv`. Deploys `deploy.cells` in experiment.yaml (6 LightGBM + logreg for the default's technique); the team picks the default cell from the CV results, the script never does; run after the test evaluation (recorded in the guard). `--source sample` writes to `artifacts/models/sample/` and `artifacts/demo/sample/` |
 | checks | `ruff check . && pytest -q` | lint and tests (synthetic sample only) |
+| sample run | `python scripts/run_all_sample.py` | every step above on the synthetic sample, into `artifacts/sample/` (experiment cells in quick mode for logreg and LightGBM; no merge; see the script for why) |
+| golden copy | `python scripts/golden.py save`, then `python scripts/golden.py check` after a refactor | `.golden/`; `check` exits 1 if any number moved by more than 1e-9 |
 
 ## Backend (FastAPI)
 

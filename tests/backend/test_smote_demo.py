@@ -17,8 +17,8 @@ from backend.app.main import API_PREFIX, create_app
 from backend.app.ratelimit import SMOTE_DEMO_LIMIT, limiter
 from backend.app.services import smote_demo as sd
 from backend.app.settings import Settings
+from fraudstudy.config import PROJECT_ROOT
 from fraudstudy.contracts import ErrorResponse, SmoteDemoRequest, SmoteDemoResponse
-from fraudstudy.paths import PROJECT_ROOT
 
 pytestmark = pytest.mark.usefixtures("rate_limits_off")
 

@@ -19,7 +19,6 @@ from sklearn.metrics import (
 )
 
 from fraudstudy.contracts import Metrics
-from fraudstudy.errors import DataValidationError
 
 F2_BETA = 2.0
 ZERO_DIVISION = 0.0
@@ -36,27 +35,27 @@ def check_inputs(y_true: object, scores: object) -> tuple[np.ndarray, np.ndarray
         ``(y, s)``: integer labels and float scores.
 
     Raises:
-        DataValidationError: If the inputs are empty, of different lengths, not 1-D, the labels
+        ValueError: If the inputs are empty, of different lengths, not 1-D, the labels
             are not 0/1, a class is missing, or a score is NaN/infinite.
     """
     y = np.asarray(y_true).ravel()
     s = np.asarray(scores, dtype=float).ravel()
     if y.size == 0 or y.size != s.size:
-        raise DataValidationError(
+        raise ValueError(
             f"Need one score per label and at least one row; got {y.size} labels and "
             f"{s.size} scores."
         )
     if not np.isin(y, (0, 1)).all():
-        raise DataValidationError("Labels must be 0 (legitimate) or 1 (fraud). Check y_true.")
+        raise ValueError("Labels must be 0 (legitimate) or 1 (fraud). Check y_true.")
     y = y.astype(int)
     n_fraud = int(y.sum())
     if n_fraud == 0 or n_fraud == y.size:
-        raise DataValidationError(
+        raise ValueError(
             f"Need both classes to evaluate; got {n_fraud} frauds and {y.size - n_fraud} "
             "legitimate rows. Use a stratified split."
         )
     if not np.isfinite(s).all():
-        raise DataValidationError("Scores contain NaN or infinite values. Check the model output.")
+        raise ValueError("Scores contain NaN or infinite values. Check the model output.")
     return y, s
 
 
@@ -79,12 +78,12 @@ def compute_metrics(y_true: object, scores: object, threshold: float) -> Metrics
         A validated ``Metrics`` object.
 
     Raises:
-        DataValidationError: If the inputs are invalid (see :func:`check_inputs`) or the
+        ValueError: If the inputs are invalid (see :func:`check_inputs`) or the
             threshold is not finite.
     """
     y, s = check_inputs(y_true, scores)
     if not np.isfinite(threshold):
-        raise DataValidationError(f"Threshold must be a finite number; got {threshold}.")
+        raise ValueError(f"Threshold must be a finite number; got {threshold}.")
     pred = (s >= threshold).astype(int)
     tn, fp, fn, tp = (int(v) for v in confusion_matrix(y, pred, labels=[0, 1]).ravel())
     return Metrics(

@@ -32,7 +32,6 @@ from pydantic import model_validator
 from sklearn.linear_model import LogisticRegression
 
 from fraudstudy.contracts import Explanation, FeatureContribution, StrictModel
-from fraudstudy.errors import ConfigError, DataValidationError
 
 N_QUANTILES = 101
 PERCENT_MIN = 0.0
@@ -111,11 +110,11 @@ def check_range_percentiles(percentiles: Sequence[float]) -> tuple[float, float]
         ``(low, high)`` as floats.
 
     Raises:
-        ConfigError: Unless there are two of them with ``0 <= low < high <= 100``.
+        ValueError: Unless there are two of them with ``0 <= low < high <= 100``.
     """
     values = [float(p) for p in percentiles]
     if len(values) != 2 or not PERCENT_MIN <= values[0] < values[1] <= PERCENT_MAX:
-        raise ConfigError(
+        raise ValueError(
             f"Range percentiles must be [low, high] with 0 <= low < high <= 100; got {values}."
         )
     return values[0], values[1]
@@ -151,8 +150,7 @@ def feature_map(preprocess: Any) -> list[tuple[str, str]]:
     """``(model feature, raw input column)`` pairs in the fitted preprocessor's output order.
 
     A branch with as many outputs as inputs maps them 1:1 (``V1 -> V1``,
-    ``log1p_Amount -> Amount``); a one-input branch maps every output to its input
-    (``hour_sin, hour_cos -> Time``).
+    ``log1p_Amount -> Amount``); a one-input branch maps every output to its input.
 
     Args:
         preprocess: The fitted ``ColumnTransformer`` (``pipeline.named_steps["preprocess"]``).
@@ -161,7 +159,7 @@ def feature_map(preprocess: Any) -> list[tuple[str, str]]:
         The pairs, one per output column.
 
     Raises:
-        DataValidationError: If a branch cannot be mapped or the order disagrees with
+        ValueError: If a branch cannot be mapped or the order disagrees with
             ``get_feature_names_out``.
     """
     pairs: list[tuple[str, str]] = []
@@ -175,13 +173,13 @@ def feature_map(preprocess: Any) -> list[tuple[str, str]]:
         elif len(inputs) == 1:
             pairs.extend((out, inputs[0]) for out in outputs)
         else:
-            raise DataValidationError(
+            raise ValueError(
                 f"Preprocessor branch {name!r} maps {inputs} to {outputs}; cannot tell which raw "
                 "column each output comes from."
             )
     names = [str(c) for c in preprocess.get_feature_names_out()]
     if [f for f, _ in pairs] != names:
-        raise DataValidationError(
+        raise ValueError(
             f"Preprocessor output order {names} does not match its branches {pairs}."
         )
     return pairs
@@ -218,16 +216,16 @@ def build_feature_reference(
         The :class:`FeatureReference`.
 
     Raises:
-        ConfigError: If ``range_percentiles`` is not a valid ``[low, high]`` pair.
-        DataValidationError: If there are no legitimate rows or the sizes disagree.
+        ValueError: If ``range_percentiles`` is not a valid ``[low, high]`` pair.
+        ValueError: If there are no legitimate rows or the sizes disagree.
     """
     percentiles = None if range_percentiles is None else check_range_percentiles(range_percentiles)
     labels = np.asarray(y_train)
     if len(labels) != len(X_train):
-        raise DataValidationError(f"X_train has {len(X_train)} rows but y_train {len(labels)}.")
+        raise ValueError(f"X_train has {len(X_train)} rows but y_train {len(labels)}.")
     legit = X_train.loc[labels == 0]
     if legit.empty:
-        raise DataValidationError("No legitimate training rows to build the reference from.")
+        raise ValueError("No legitimate training rows to build the reference from.")
     pairs = feature_map(preprocess)
     scaled_mean = np.asarray(preprocess.transform(X_train), dtype=float).mean(axis=0)
     levels = np.linspace(0.0, 1.0, N_QUANTILES)
@@ -294,18 +292,18 @@ def model_kind(pipeline: Any) -> str:
     """``"logreg"`` or ``"lightgbm"`` for the pipeline's final ``model`` step.
 
     Raises:
-        ConfigError: If the pipeline has no ``preprocess`` / ``model`` step or the model cannot
+        ValueError: If the pipeline has no ``preprocess`` / ``model`` step or the model cannot
             be explained here (random forest is not deployed; use ``shap`` in a notebook).
     """
     steps = getattr(pipeline, "named_steps", {})
     if "preprocess" not in steps or "model" not in steps:
-        raise ConfigError("Expected a pipeline with 'preprocess' and 'model' steps.")
+        raise ValueError("Expected a pipeline with 'preprocess' and 'model' steps.")
     model = steps["model"]
     if isinstance(model, LogisticRegression):
         return "logreg"
     if isinstance(model, LGBMClassifier):
         return "lightgbm"
-    raise ConfigError(
+    raise ValueError(
         f"Cannot explain {type(model).__name__}; only {', '.join(EXPLAINABLE_MODELS)} are "
         "deployed. For random forest use the shap package in a notebook."
     )
@@ -317,7 +315,7 @@ def _aligned_reference(
     """The reference entries in the pipeline's feature order; raise if they do not match."""
     expected = [(r.feature, r.raw_column) for r in reference.features]
     if expected != pairs:
-        raise DataValidationError(
+        raise ValueError(
             f"feature_reference.json lists {expected} but the pipeline produces {pairs}; "
             "re-run scripts/export_artifacts.py so both come from the same export."
         )
@@ -338,15 +336,15 @@ def compute_contributions(
         A :class:`Contributions`.
 
     Raises:
-        ConfigError: If the model cannot be explained.
-        DataValidationError: If ``X`` lacks input columns or the reference does not match.
+        ValueError: If the model cannot be explained.
+        ValueError: If ``X`` lacks input columns or the reference does not match.
     """
     kind = model_kind(pipeline)
     preprocess = pipeline.named_steps["preprocess"]
     model = pipeline.named_steps["model"]
     missing = [str(c) for c in preprocess.feature_names_in_ if c not in X.columns]
     if missing:
-        raise DataValidationError(f"Rows lack the model's input columns: {', '.join(missing)}.")
+        raise ValueError(f"Rows lack the model's input columns: {', '.join(missing)}.")
     pairs = feature_map(preprocess)
     ref = _aligned_reference(reference, pairs)
     X_transformed = preprocess.transform(X)
@@ -398,17 +396,17 @@ def explain(
         The contract ``Explanation``.
 
     Raises:
-        ConfigError: If ``top_k < 1`` or the model cannot be explained.
-        DataValidationError: If ``row_df`` is not one row of finite values with the input columns.
+        ValueError: If ``top_k < 1`` or the model cannot be explained.
+        ValueError: If ``row_df`` is not one row of finite values with the input columns.
     """
     if top_k < 1:
-        raise ConfigError(f"top_k must be at least 1; got {top_k}.")
+        raise ValueError(f"top_k must be at least 1; got {top_k}.")
     if len(row_df) != 1:
-        raise DataValidationError(f"explain() takes exactly one row; got {len(row_df)}.")
+        raise ValueError(f"explain() takes exactly one row; got {len(row_df)}.")
     c = compute_contributions(pipeline, row_df, reference)
     values, contrib = c.values[0], c.contributions[0]
     if not np.all(np.isfinite(values)):
-        raise DataValidationError("explain() needs finite values for every input column.")
+        raise ValueError("explain() needs finite values for every input column.")
     order = sorted(range(len(c.features)), key=lambda j: (-abs(contrib[j]), j))[:top_k]
     quantiles = {r.feature: r.legit_quantiles for r in reference.features}
     items = [

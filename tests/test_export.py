@@ -20,9 +20,9 @@ import pandas as pd
 import pytest
 import yaml
 
-from fraudstudy import export
+from fraudstudy import config, export
+from fraudstudy.config import resolve
 from fraudstudy.contracts import Manifest, PresetsFile
-from fraudstudy.errors import ConfigError, DataValidationError, LeakageError
 from fraudstudy.evaluation import fit_isotonic
 from fraudstudy.experiment import Configs, load_cell_record, run_experiments
 from fraudstudy.experiment.results import cell_paths
@@ -43,7 +43,6 @@ from fraudstudy.export import (
     size_warnings,
 )
 from fraudstudy.io import load_json, sha256_file
-from fraudstudy.paths import resolve
 
 DEFAULT = "lightgbm__smote_rus"
 DEPLOY_CELLS = ["lightgbm__baseline", "lightgbm__smote_rus", "logreg__<technique>"]
@@ -129,7 +128,7 @@ def workdir(run: dict[str, Any], tmp_path: Path) -> dict[str, Path]:
 
 def test_refuses_without_a_default_cell(run: dict[str, Any], cfgs: Configs) -> None:
     assert cfgs.experiment["deploy"]["default_cell"] is None
-    with pytest.raises(ConfigError, match="TEAM chooses it"):
+    with pytest.raises(ValueError, match="TEAM chooses it"):
         export_artifacts("sample", run["results"], run["models"], out=run["out"], cfgs=cfgs)
 
 
@@ -141,7 +140,7 @@ def test_deploy_settings_resolve_the_logreg_placeholder(cfgs: Configs) -> None:
     configured = copy.deepcopy(exp)
     configured["deploy"]["default_cell"] = DEFAULT
     assert deploy_settings(configured).default_cell == DEFAULT
-    with pytest.raises(ConfigError, match="disagrees"):
+    with pytest.raises(ValueError, match="disagrees"):
         deploy_settings(configured, "lightgbm__baseline")
 
 
@@ -161,7 +160,7 @@ def test_deploy_settings_reject_bad_input(
 ) -> None:
     exp = copy.deepcopy(cfgs.experiment)
     exp["deploy"].update(change)
-    with pytest.raises(ConfigError, match=message):
+    with pytest.raises(ValueError, match=message):
         deploy_settings(exp, default)
 
 
@@ -169,13 +168,13 @@ def test_deploy_settings_check_the_input_range_percentiles(cfgs: Configs) -> Non
     exp = copy.deepcopy(cfgs.experiment)
     assert deploy_settings(exp, DEFAULT).input_range_percentiles == (0.1, 99.9)
     exp["deploy"]["input_range_percentiles"] = [99.9, 0.1]
-    with pytest.raises(ConfigError, match="Range percentiles"):
+    with pytest.raises(ValueError, match="Range percentiles"):
         deploy_settings(exp, DEFAULT)
 
 
 def test_deploy_block_is_required(cfgs: Configs) -> None:
     exp = {k: v for k, v in cfgs.experiment.items() if k != "deploy"}
-    with pytest.raises(ConfigError, match="deploy"):
+    with pytest.raises(ValueError, match="deploy"):
         deploy_settings(exp, DEFAULT)
 
 
@@ -366,14 +365,14 @@ def test_guard_requires_the_test_evaluation_and_a_reason_to_repeat(
         "cfgs": cfgs,
         "log": _noop,
     }
-    with pytest.raises(LeakageError, match="evaluate_test.py first"):
+    with pytest.raises(ValueError, match="evaluate_test.py first"):
         export_artifacts("sample", workdir["results"], workdir["models"], **kwargs)
     open_test_set(guard, [("lightgbm", "baseline")], None, workdir["decisions"])
     export_artifacts("sample", workdir["results"], workdir["models"], **kwargs)
     openings = load_json(guard)["openings"]
     assert [o["action"] for o in openings] == ["evaluate_test", EXPORT_ACTION]
     assert openings[-1]["cells"] == EXPORTED
-    with pytest.raises(LeakageError, match="--rerun-reason"):
+    with pytest.raises(ValueError, match="--rerun-reason"):
         export_artifacts("sample", workdir["results"], workdir["models"], **kwargs)
 
 
@@ -382,7 +381,7 @@ def test_refuses_a_pipeline_changed_after_the_test_evaluation(
 ) -> None:
     path = cell_paths("lightgbm", "baseline", workdir["results"], workdir["models"])["pipeline"]
     joblib.dump(joblib.load(path), path, compress=1)
-    with pytest.raises(DataValidationError, match="changed after the test evaluation"):
+    with pytest.raises(ValueError, match="changed after the test evaluation"):
         export_artifacts(
             "sample",
             workdir["results"],
@@ -397,7 +396,7 @@ def test_refuses_a_pipeline_changed_after_the_test_evaluation(
 def test_refuses_cells_that_did_not_run(workdir: dict[str, Path], cfgs: Configs) -> None:
     exp = copy.deepcopy(cfgs.experiment)
     exp["deploy"]["cells"] = [*DEPLOY_CELLS, "lightgbm__ros"]
-    with pytest.raises(ConfigError, match="lightgbm__ros"):
+    with pytest.raises(ValueError, match="lightgbm__ros"):
         export_artifacts(
             "sample",
             workdir["results"],
@@ -414,7 +413,7 @@ def test_refuses_other_library_versions(
 ) -> None:
     real = export.library_versions()
     monkeypatch.setattr(export, "library_versions", lambda: {**real, "lightgbm": "0.0.1"})
-    with pytest.raises(ConfigError, match="lightgbm"):
+    with pytest.raises(ValueError, match="lightgbm"):
         export_artifacts(
             "sample",
             workdir["results"],
@@ -446,7 +445,7 @@ def test_cli_exports_and_refuses_without_default(
     for name, data in (("dataset", cfgs.dataset), ("experiment", cfgs.experiment)):
         (config_dir / f"{name}.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
     (config_dir / "models.yaml").write_text(yaml.safe_dump(cfgs.models), encoding="utf-8")
-    monkeypatch.setenv("FRAUDSTUDY_CONFIG_DIR", str(config_dir))
+    monkeypatch.setattr(config, "CONFIG_DIR", config_dir)
     out = workdir["root"] / "cli"
     args = [
         "--source", "sample",

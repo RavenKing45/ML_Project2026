@@ -19,7 +19,6 @@ from fastapi.responses import JSONResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from fraudstudy.contracts import ErrorDetail, ErrorResponse
-from fraudstudy.errors import FraudStudyError
 
 STATUS_CODES: dict[int, str] = {
     400: "bad_request",
@@ -35,7 +34,7 @@ ARTIFACT_UNAVAILABLE = "artifact_unavailable"
 DOCS_PATH = "/docs"
 
 
-class ArtifactError(FraudStudyError):
+class ArtifactError(Exception):
     """An artifact file is missing, unreadable, or fails a checksum or version check."""
 
 

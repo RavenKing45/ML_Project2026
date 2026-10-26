@@ -21,9 +21,8 @@ import argparse
 import sys
 from pathlib import Path
 
-from fraudstudy.errors import FraudStudyError
+from fraudstudy.config import resolve
 from fraudstudy.experiment.test_eval import evaluate_test
-from fraudstudy.paths import resolve
 
 RESULTS_DIR = "artifacts/results"
 MODELS_DIR = "artifacts/models"
@@ -65,7 +64,7 @@ def main(argv: list[str] | None = None) -> int:
             verify_hash=not args.no_verify_hash,
             log=lambda line: print(line, flush=True),
         )
-    except FraudStudyError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

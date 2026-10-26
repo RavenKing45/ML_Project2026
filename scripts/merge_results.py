@@ -15,10 +15,8 @@ import logging
 import sys
 from pathlib import Path
 
-from fraudstudy.config import get_experiment_config
-from fraudstudy.errors import FraudStudyError
+from fraudstudy.config import get_experiment_config, resolve
 from fraudstudy.experiment import cell_id, merge_results
-from fraudstudy.paths import resolve
 
 RESULTS_DIR = "artifacts/results"
 
@@ -43,7 +41,7 @@ def main(argv: list[str] | None = None) -> int:
         report = merge_results(
             args.inputs, args.output, list(exp_cfg["models"]), list(exp_cfg["techniques"])
         )
-    except FraudStudyError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
 

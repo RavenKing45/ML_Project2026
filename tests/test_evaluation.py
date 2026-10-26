@@ -11,8 +11,8 @@ import numpy as np
 import pytest
 from sklearn.metrics import average_precision_score, roc_auc_score
 
+from fraudstudy.config import PROJECT_ROOT
 from fraudstudy.contracts import MAX_CURVE_POINTS, Curves, Metrics, ThresholdTable
-from fraudstudy.errors import ConfigError, DataValidationError
 from fraudstudy.evaluation import (
     apply_calibrator,
     best_threshold,
@@ -26,7 +26,6 @@ from fraudstudy.evaluation import (
     make_curves,
     threshold_table,
 )
-from fraudstudy.paths import PROJECT_ROOT
 
 SEED = 42
 N_LEGIT_REAL, N_FRAUD_REAL = 284_315, 492  # ULB dataset class counts
@@ -78,15 +77,15 @@ def test_always_zero_scorer_shows_the_accuracy_paradox() -> None:
 
 
 def test_check_inputs_rejects_bad_data() -> None:
-    with pytest.raises(DataValidationError, match="one score per label"):
+    with pytest.raises(ValueError, match="one score per label"):
         check_inputs([0, 1], [0.1])
-    with pytest.raises(DataValidationError, match="0 \\(legitimate\\) or 1"):
+    with pytest.raises(ValueError, match="0 \\(legitimate\\) or 1"):
         check_inputs([0, 2], [0.1, 0.2])
-    with pytest.raises(DataValidationError, match="both classes"):
+    with pytest.raises(ValueError, match="both classes"):
         check_inputs([0, 0], [0.1, 0.2])
-    with pytest.raises(DataValidationError, match="NaN"):
+    with pytest.raises(ValueError, match="NaN"):
         check_inputs([0, 1], [0.1, np.nan])
-    with pytest.raises(DataValidationError, match="finite"):
+    with pytest.raises(ValueError, match="finite"):
         compute_metrics(Y10, S10, float("nan"))
 
 
@@ -117,7 +116,7 @@ def test_best_threshold_breaks_ties_by_higher_threshold() -> None:
 
 
 def test_best_threshold_rejects_unknown_objective() -> None:
-    with pytest.raises(ConfigError, match="Unknown threshold objective"):
+    with pytest.raises(ValueError, match="Unknown threshold objective"):
         best_threshold(Y10, S10, "accuracy")  # type: ignore[arg-type]
 
 
@@ -148,9 +147,9 @@ def test_make_curves_downsamples_and_validates_against_contract() -> None:
 
 
 def test_make_curves_rejects_bad_max_points_and_scores() -> None:
-    with pytest.raises(DataValidationError, match="max_points"):
+    with pytest.raises(ValueError, match="max_points"):
         make_curves(Y10, S10, model="logreg", technique="baseline", max_points=MAX_CURVE_POINTS + 1)
-    with pytest.raises(DataValidationError, match="scores in \\[0, 1\\]"):
+    with pytest.raises(ValueError, match="scores in \\[0, 1\\]"):
         make_curves(Y10, S10 * 2, model="logreg", technique="baseline")
 
 
@@ -217,9 +216,9 @@ def test_bootstrap_1000_resamples_on_85k_rows_is_fast() -> None:
 
 
 def test_bootstrap_rejects_bad_arguments() -> None:
-    with pytest.raises(DataValidationError, match="confidence"):
+    with pytest.raises(ValueError, match="confidence"):
         bootstrap_ci(Y10, S10, average_precision_score, 10, 1.0, SEED)
-    with pytest.raises(DataValidationError, match="n_resamples"):
+    with pytest.raises(ValueError, match="n_resamples"):
         bootstrap_ci(Y10, S10, average_precision_score, 0, 0.95, SEED)
 
 
@@ -241,7 +240,7 @@ def test_isotonic_calibration_maps_to_probabilities_and_keeps_order() -> None:
 
 
 def test_evaluation_does_not_import_modelling_code() -> None:
-    forbidden = ("fraudstudy.pipeline", "fraudstudy.sampling", "fraudstudy.features", "imblearn")
+    forbidden = ("fraudstudy.pipeline", "fraudstudy.sampling", "fraudstudy.preprocess", "imblearn")
     for path in Path(PROJECT_ROOT, "src", "fraudstudy", "evaluation").glob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):

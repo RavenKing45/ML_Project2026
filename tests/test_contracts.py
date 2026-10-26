@@ -8,9 +8,8 @@ import pytest
 from pydantic import ValidationError
 
 from fraudstudy import contracts as c
-from fraudstudy.config import get_experiment_config
+from fraudstudy.config import PROJECT_ROOT, get_experiment_config
 from fraudstudy.io import load_json
-from fraudstudy.paths import PROJECT_ROOT
 
 EXAMPLES_DIR = PROJECT_ROOT / "docs" / "contracts" / "examples"
 EXPECTED_EXAMPLES = {

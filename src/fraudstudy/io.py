@@ -1,99 +1,54 @@
-"""JSON persistence, file hashing and provenance helpers."""
+"""Reading and writing JSON results, hashing files and reading the git commit.
+
+Scripts call save_json() for every result file in artifacts/, load_json() to read them back,
+sha256_file() to pin a dataset, and git_hash() to record which code produced a result.
+"""
 
 import hashlib
 import json
 import subprocess
 from pathlib import Path
-from typing import Any
 
-import numpy as np
-
-from fraudstudy.paths import PROJECT_ROOT
-
-_HASH_CHUNK_BYTES = 1 << 20
+from fraudstudy.config import PROJECT_ROOT
 
 
-def to_builtin(obj: Any) -> Any:
-    """Recursively convert NumPy scalars/arrays (and tuples) to plain Python types.
-
-    Args:
-        obj: Any JSON-like structure possibly containing NumPy values.
-
-    Returns:
-        An equivalent structure containing only built-in Python types.
-    """
-    if isinstance(obj, dict):
-        return {str(k): to_builtin(v) for k, v in obj.items()}
-    if isinstance(obj, list | tuple):
-        return [to_builtin(v) for v in obj]
-    if isinstance(obj, np.ndarray):
-        return to_builtin(obj.tolist())
-    if isinstance(obj, np.generic):
-        return obj.item()
-    if isinstance(obj, Path):
-        return obj.as_posix()
-    return obj
+def to_plain(value: object) -> object:
+    """Convert a value json cannot write itself: a path, or a NumPy number or array."""
+    if isinstance(value, Path):
+        return value.as_posix()
+    # NumPy scalars and arrays both have tolist(), which returns plain Python numbers and lists.
+    return value.tolist()
 
 
-def save_json(data: Any, path: str | Path) -> Path:
-    """Write ``data`` as UTF-8 JSON (indent=2, key order preserved), creating parent dirs.
-
-    Args:
-        data: JSON-like structure; NumPy types are converted to plain Python.
-        path: Destination file.
-
-    Returns:
-        The path written.
-    """
+def save_json(data: object, path: str | Path) -> Path:
+    """Write `data` as indented UTF-8 JSON (keys kept in order), creating folders as needed."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(to_builtin(data), indent=2, sort_keys=False, ensure_ascii=False),
-        encoding="utf-8",
-    )
+    text = json.dumps(data, indent=2, ensure_ascii=False, default=to_plain)
+    path.write_text(text, encoding="utf-8")
     return path
 
 
-def load_json(path: str | Path) -> Any:
-    """Read a UTF-8 JSON file.
-
-    Args:
-        path: Source file.
-
-    Returns:
-        The parsed JSON value.
-    """
+def load_json(path: str | Path) -> object:
+    """Read a UTF-8 JSON file."""
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
 def sha256_file(path: str | Path) -> str:
-    """Return the hex SHA-256 digest of a file, read in 1 MiB chunks.
-
-    Args:
-        path: File to hash.
-
-    Returns:
-        64-character lowercase hex digest.
-    """
+    """Return the SHA-256 of a file as 64 hex characters."""
     digest = hashlib.sha256()
     with Path(path).open("rb") as handle:
-        for chunk in iter(lambda: handle.read(_HASH_CHUNK_BYTES), b""):
+        # Read 1 MB at a time so the 150 MB dataset never sits in memory at once.
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
 
 
-def git_commit_hash() -> str | None:
-    """Return the current git HEAD commit hash, or ``None`` if unavailable.
-
-    Returns:
-        The 40-character commit hash, or ``None`` outside a git repo or without git.
-    """
+def git_hash() -> str | None:
+    """Return the current git commit hash, or None when git or the repository is missing."""
     try:
         result = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            cwd=PROJECT_ROOT,
-            capture_output=True,
-            text=True,
+            ["git", "rev-parse", "HEAD"], cwd=PROJECT_ROOT, capture_output=True, text=True,
             check=True,
         )
     except (OSError, subprocess.CalledProcessError):

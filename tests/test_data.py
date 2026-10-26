@@ -1,4 +1,4 @@
-"""Tests for the data layer (load, validate, deduplicate, split) and scripts/data_summary.py."""
+"""Tests for fraudstudy.data (load, check, deduplicate, split) and scripts/data_summary.py."""
 
 import importlib.util
 from pathlib import Path
@@ -8,20 +8,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from fraudstudy.config import get_dataset_config, get_experiment_config
-from fraudstudy.data import (
-    DedupReport,
-    ValidationReport,
-    deduplicate,
-    feature_columns,
-    load_dataset,
-    required_columns,
-    split_dataset,
-    validate_dataframe,
-)
-from fraudstudy.errors import ConfigError, DataValidationError
+from fraudstudy.config import PROJECT_ROOT, get_dataset_config, get_experiment_config, resolve
+from fraudstudy.data import check_dataset, deduplicate, feature_columns, load_dataset, split_dataset
 from fraudstudy.io import sha256_file
-from fraudstudy.paths import PROJECT_ROOT, resolve
 
 PCA = [f"V{i}" for i in range(1, 29)]
 
@@ -60,69 +49,52 @@ def _cfg_with(cfg: dict[str, Any], **overrides: Any) -> dict[str, Any]:
 # --- validate -----------------------------------------------------------------------------------
 
 
-def test_required_columns_order(cfg: dict[str, Any]) -> None:
-    assert required_columns(cfg) == ["Time", *PCA, "Amount", "Class"]
-
-
-def test_validate_sample_report(sample: pd.DataFrame, cfg: dict[str, Any]) -> None:
-    report = validate_dataframe(sample, cfg)
-    assert isinstance(report, ValidationReport)
-    assert (report.n_rows, report.n_columns) == (6000, 31)
-    assert report.n_frauds == 90 and report.n_legit == 5910
-    assert report.fraud_rate == pytest.approx(0.015)
-    assert list(report.missing_values) == list(sample.columns)
-    assert sum(report.missing_values.values()) == 0
-    assert report.extra_columns == []
-
-
-def test_validate_counts_missing_and_extra_columns(
+def test_check_accepts_sample_and_missing_feature_values(
     sample: pd.DataFrame, cfg: dict[str, Any]
 ) -> None:
+    check_dataset(sample, cfg)
     df = sample.head(50).copy()
-    df.loc[[0, 1, 2], "V3"] = np.nan
+    df.loc[[0, 1, 2], "V3"] = np.nan  # blank cells are imputed later, not rejected
     df.loc[4, "Amount"] = np.nan
-    df["note"] = 1.0
-    report = validate_dataframe(df, cfg)
-    assert report.missing_values["V3"] == 3
-    assert report.missing_values["Amount"] == 1
-    assert report.extra_columns == ["note"]
+    df["note"] = 1.0  # extra columns are ignored
+    check_dataset(df, cfg)
 
 
-def test_validate_missing_column_raises(sample: pd.DataFrame, cfg: dict[str, Any]) -> None:
-    with pytest.raises(DataValidationError, match="missing required columns: V7"):
-        validate_dataframe(sample.drop(columns=["V7"]), cfg)
+def test_check_missing_column_raises(sample: pd.DataFrame, cfg: dict[str, Any]) -> None:
+    with pytest.raises(ValueError, match="missing required columns: V7"):
+        check_dataset(sample.drop(columns=["V7"]), cfg)
 
 
-def test_validate_inf_raises(sample: pd.DataFrame, cfg: dict[str, Any]) -> None:
+def test_check_inf_raises(sample: pd.DataFrame, cfg: dict[str, Any]) -> None:
     df = sample.head(20).copy()
     df.loc[3, "V2"] = np.inf
     df.loc[5, "V2"] = -np.inf
-    with pytest.raises(DataValidationError, match=r"infinite values in: V2 \(2 rows\)"):
-        validate_dataframe(df, cfg)
+    with pytest.raises(ValueError, match=r"infinite values in: V2 \(2 rows\)"):
+        check_dataset(df, cfg)
 
 
-def test_validate_bad_class_raises(sample: pd.DataFrame, cfg: dict[str, Any]) -> None:
+def test_check_bad_class_raises(sample: pd.DataFrame, cfg: dict[str, Any]) -> None:
     df = sample.head(20).copy()
     df.loc[0, "Class"] = 2
-    with pytest.raises(DataValidationError, match="must be 0 or 1; 1 rows have 2"):
-        validate_dataframe(df, cfg)
+    with pytest.raises(ValueError, match="must be 0 or 1; 1 rows have 2"):
+        check_dataset(df, cfg)
 
 
-def test_validate_missing_class_raises(sample: pd.DataFrame, cfg: dict[str, Any]) -> None:
+def test_check_missing_class_raises(sample: pd.DataFrame, cfg: dict[str, Any]) -> None:
     df = sample.head(20).astype({"Class": float})
     df.loc[0, "Class"] = np.nan
-    with pytest.raises(DataValidationError, match="must be 0 or 1"):
-        validate_dataframe(df, cfg)
+    with pytest.raises(ValueError, match="must be 0 or 1"):
+        check_dataset(df, cfg)
 
 
-def test_validate_reports_every_problem_at_once(sample: pd.DataFrame, cfg: dict[str, Any]) -> None:
+def test_check_reports_every_problem_at_once(sample: pd.DataFrame, cfg: dict[str, Any]) -> None:
     df = sample.head(20).drop(columns=["V9"])
     df.loc[1, "V1"] = np.inf
     df.loc[2, "Class"] = 2
     df.loc[3, "Amount"] = -5.0
     df["V5"] = "x"
-    with pytest.raises(DataValidationError) as excinfo:
-        validate_dataframe(df, cfg)
+    with pytest.raises(ValueError) as excinfo:
+        check_dataset(df, cfg)
     message = str(excinfo.value)
     for fragment in (
         "missing required columns: V9",
@@ -135,9 +107,9 @@ def test_validate_reports_every_problem_at_once(sample: pd.DataFrame, cfg: dict[
         assert fragment in message
 
 
-def test_validate_does_not_mutate(sample: pd.DataFrame, cfg: dict[str, Any]) -> None:
+def test_check_does_not_mutate(sample: pd.DataFrame, cfg: dict[str, Any]) -> None:
     before = sample.copy()
-    validate_dataframe(sample, cfg)
+    check_dataset(sample, cfg)
     pd.testing.assert_frame_equal(sample, before)
 
 
@@ -150,25 +122,20 @@ def test_load_sample(sample: pd.DataFrame) -> None:
     assert isinstance(sample.index, pd.RangeIndex)
 
 
-def test_load_unknown_source_raises(cfg: dict[str, Any]) -> None:
-    with pytest.raises(DataValidationError, match="source must be"):
-        load_dataset("processed", cfg=cfg)  # type: ignore[arg-type]
-
-
 def test_load_raw_missing_explains_download(cfg: dict[str, Any], tmp_path: Path) -> None:
-    with pytest.raises(DataValidationError, match="kaggle.com/datasets/mlg-ulb/creditcardfraud"):
+    with pytest.raises(FileNotFoundError, match="kaggle.com/datasets/mlg-ulb/creditcardfraud"):
         load_dataset("raw", cfg=_cfg_with(cfg, raw_path=str(tmp_path / "nope.csv")))
 
 
 def test_load_raw_path_is_folder_explains_fix(cfg: dict[str, Any], tmp_path: Path) -> None:
     folder = tmp_path / "creditcard.csv"
     folder.mkdir()
-    with pytest.raises(DataValidationError, match="is a folder, not a file"):
+    with pytest.raises(FileNotFoundError, match="is a folder, not a file"):
         load_dataset("raw", cfg=_cfg_with(cfg, raw_path=str(folder)))
 
 
 def test_load_sample_missing_raises(cfg: dict[str, Any], tmp_path: Path) -> None:
-    with pytest.raises(DataValidationError, match="generate_synthetic_data"):
+    with pytest.raises(FileNotFoundError, match="generate_synthetic_data"):
         load_dataset("sample", cfg=_cfg_with(cfg, sample_path=str(tmp_path / "x.csv")))
 
 
@@ -189,24 +156,15 @@ def test_load_raw_hash_match(cfg: dict[str, Any], raw_copy: Path) -> None:
 
 def test_load_raw_hash_mismatch_raises(cfg: dict[str, Any], raw_copy: Path) -> None:
     bad = _cfg_with(cfg, raw_path=str(raw_copy), sha256="0" * 64)
-    with pytest.raises(DataValidationError, match="SHA-256 mismatch"):
+    with pytest.raises(ValueError, match="SHA-256 mismatch"):
         load_dataset("raw", cfg=bad)
     assert len(load_dataset("raw", verify_hash=False, cfg=bad)) == 6000
-
-
-def test_load_raw_null_hash_prints_hint(
-    cfg: dict[str, Any], raw_copy: Path, capsys: pytest.CaptureFixture[str]
-) -> None:
-    load_dataset("raw", cfg=_cfg_with(cfg, raw_path=str(raw_copy), sha256=None))
-    out = capsys.readouterr().out
-    assert sha256_file(raw_copy) in out
-    assert "configs/dataset.yaml" in out
 
 
 def test_load_raw_invalid_contents_raise(cfg: dict[str, Any], tmp_path: Path) -> None:
     path = tmp_path / "bad.csv"
     pd.DataFrame({"Time": [0.0], "Amount": [1.0], "Class": [0]}).to_csv(path, index=False)
-    with pytest.raises(DataValidationError, match="missing required columns"):
+    with pytest.raises(ValueError, match="missing required columns"):
         load_dataset("raw", verify_hash=False, cfg=_cfg_with(cfg, raw_path=str(path)))
 
 
@@ -215,9 +173,9 @@ def test_load_raw_invalid_contents_raise(cfg: dict[str, Any], tmp_path: Path) ->
 
 def test_dedup_counts(sample: pd.DataFrame) -> None:
     out, report = deduplicate(sample)
-    assert report == DedupReport(
-        n_rows_before=6000, n_rows_after=5980, n_removed=20, n_frauds_removed=2
-    )
+    assert report == {
+        "rows_before": 6000, "rows_after": 5980, "rows_removed": 20, "frauds_removed": 2
+    }
     assert len(out) == 5980
     assert not out.duplicated().any()
     assert int(out["Class"].sum()) == 88
@@ -239,20 +197,14 @@ def test_dedup_returns_new_frame_without_mutating(sample: pd.DataFrame) -> None:
 def test_dedup_no_duplicates() -> None:
     df = pd.DataFrame({"a": [1, 2], "Class": [0, 1]})
     out, report = deduplicate(df, target="Class")
-    assert report.n_removed == 0 and len(out) == 2
+    assert report["rows_removed"] == 0 and len(out) == 2
 
 
 # --- feature_columns ----------------------------------------------------------------------------
 
 
-def test_feature_columns_default(cfg: dict[str, Any]) -> None:
-    assert feature_columns(cfg, use_hour_feature=False) == [*PCA, "Amount"]
-
-
-def test_feature_columns_with_hour(cfg: dict[str, Any]) -> None:
-    cols = feature_columns(cfg, use_hour_feature=True)
-    assert cols == [*PCA, "Amount", "Time"]
-    assert feature_columns(cfg, use_hour_feature=True) == cols  # stable
+def test_feature_columns_leave_out_time(cfg: dict[str, Any]) -> None:
+    assert feature_columns(cfg) == [*PCA, "Amount"]
 
 
 # --- split --------------------------------------------------------------------------------------
@@ -262,16 +214,16 @@ def test_stratified_split(
     deduped: pd.DataFrame, cfg: dict[str, Any], exp_cfg: dict[str, Any]
 ) -> None:
     split = split_dataset(deduped, cfg, exp_cfg, strategy="stratified")
-    s = split.summary
-    assert split.strategy == "stratified"
+    s = split["summary"]
+    assert split["strategy"] == "stratified"
     assert abs(s["train"]["fraud_rate"] - s["test"]["fraud_rate"]) <= 0.003
-    assert set(split.X_train.index).isdisjoint(split.X_test.index)
+    assert set(split["X_train"].index).isdisjoint(split["X_test"].index)
     assert s["train"]["rows"] + s["test"]["rows"] == len(deduped) == s["all"]["rows"]
     assert s["train"]["frauds"] + s["test"]["frauds"] == 88
     assert s["test"]["rows"] == pytest.approx(len(deduped) * exp_cfg["test_size"], abs=1)
-    assert list(split.X_train.columns) == [*PCA, "Amount"]
-    assert split.X_train.index.equals(split.y_train.index)
-    assert split.X_test.index.equals(split.y_test.index)
+    assert list(split["X_train"].columns) == [*PCA, "Amount"]
+    assert split["X_train"].index.equals(split["y_train"].index)
+    assert split["X_test"].index.equals(split["y_test"].index)
 
 
 def test_stratified_split_is_deterministic(
@@ -279,9 +231,9 @@ def test_stratified_split_is_deterministic(
 ) -> None:
     a = split_dataset(deduped, cfg, exp_cfg)
     b = split_dataset(deduped, cfg, exp_cfg)
-    assert a.X_test.index.equals(b.X_test.index)
+    assert a["X_test"].index.equals(b["X_test"].index)
     c = split_dataset(deduped, cfg, {**exp_cfg, "seed": exp_cfg["seed"] + 1})
-    assert not a.X_test.index.equals(c.X_test.index)
+    assert not a["X_test"].index.equals(c["X_test"].index)
 
 
 def test_temporal_split(
@@ -289,18 +241,11 @@ def test_temporal_split(
 ) -> None:
     split = split_dataset(deduped, cfg, exp_cfg, strategy="temporal")
     time = deduped["Time"]
-    assert time.loc[split.X_train.index].max() <= time.loc[split.X_test.index].min()
-    assert set(split.X_train.index).isdisjoint(split.X_test.index)
-    assert len(split.X_train) == round(len(deduped) * (1 - exp_cfg["test_size"]))
-    assert len(split.X_train) + len(split.X_test) == len(deduped)
-    assert "Time" not in split.X_train.columns
-
-
-def test_hour_feature_keeps_time(
-    deduped: pd.DataFrame, cfg: dict[str, Any], exp_cfg: dict[str, Any]
-) -> None:
-    split = split_dataset(deduped, cfg, {**exp_cfg, "use_hour_feature": True})
-    assert list(split.X_train.columns)[-1] == "Time"
+    assert time.loc[split["X_train"].index].max() <= time.loc[split["X_test"].index].min()
+    assert set(split["X_train"].index).isdisjoint(split["X_test"].index)
+    assert len(split["X_train"]) == round(len(deduped) * (1 - exp_cfg["test_size"]))
+    assert len(split["X_train"]) + len(split["X_test"]) == len(deduped)
+    assert "Time" not in split["X_train"].columns
 
 
 def test_split_does_not_mutate(
@@ -308,23 +253,15 @@ def test_split_does_not_mutate(
 ) -> None:
     before = deduped.copy()
     for strategy in ("stratified", "temporal"):
-        split_dataset(deduped, cfg, exp_cfg, strategy=strategy)  # type: ignore[arg-type]
+        split_dataset(deduped, cfg, exp_cfg, strategy=strategy)
     pd.testing.assert_frame_equal(deduped, before)
 
 
-def test_split_bad_arguments_raise(
+def test_split_unknown_strategy_raises(
     deduped: pd.DataFrame, cfg: dict[str, Any], exp_cfg: dict[str, Any]
 ) -> None:
-    with pytest.raises(ConfigError, match="strategy"):
-        split_dataset(deduped, cfg, exp_cfg, strategy="random")  # type: ignore[arg-type]
-    with pytest.raises(ConfigError, match="test_size"):
-        split_dataset(deduped, cfg, {**exp_cfg, "test_size": 1.5})
-
-
-def test_temporal_split_too_small_raises(cfg: dict[str, Any], exp_cfg: dict[str, Any]) -> None:
-    tiny = pd.DataFrame({c: [0.0] for c in required_columns(cfg)})
-    with pytest.raises(DataValidationError, match="empty part"):
-        split_dataset(tiny, cfg, exp_cfg, strategy="temporal")
+    with pytest.raises(ValueError, match="strategy"):
+        split_dataset(deduped, cfg, exp_cfg, strategy="random")
 
 
 # --- scripts/data_summary.py --------------------------------------------------------------------

@@ -14,7 +14,6 @@ quick: {train_fraction: 0.10, cv_folds: 3, n_iter: 3, cv_repeats: 1}
 threshold: {objectives: [f1, f2]}
 bootstrap: {n_resamples: 1000, confidence: 0.95}
 stats: {alpha: 0.05}   # Wilcoxon (Holm), Friedman and Nemenyi CD in scripts/run_stats.py
-use_hour_feature: false   # optional side test; assumes Time=0 is midnight (unverified)
 # Deployable subset for the backend (scripts/export_artifacts.py; master guide Parts 9 and 11).
 # Only logreg and LightGBM fit on the 512 MB server; random forest stays in the JSON results.
 # "logreg__<technique>" means logistic regression with the default cell's technique.

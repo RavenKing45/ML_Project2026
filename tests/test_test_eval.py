@@ -15,8 +15,8 @@ import numpy as np
 import pytest
 
 from fraudstudy import evaluation
+from fraudstudy.config import resolve
 from fraudstudy.contracts import ComparisonTable, CurvesFile
-from fraudstudy.errors import ConfigError, LeakageError
 from fraudstudy.evaluation import compute_metrics, thresholds
 from fraudstudy.experiment import Configs, load_cell_record, run_experiments
 from fraudstudy.experiment.results import RUN_META_FILE, cell_paths
@@ -33,7 +33,6 @@ from fraudstudy.experiment.test_eval import (
     temporal_check,
 )
 from fraudstudy.io import load_json, save_json
-from fraudstudy.paths import resolve
 
 CELLS = [("logreg", "baseline"), ("logreg", "smote"), ("lightgbm", "baseline")]
 
@@ -140,9 +139,9 @@ def test_guard_blocks_second_run_without_reason(workdir: dict[str, Path], cfgs: 
     assert len(first["openings"]) == 1 and first["openings"][0]["cells"][0] == "logreg__baseline"
     assert workdir["decisions"].read_text(encoding="utf-8") == before  # first opening: no row
 
-    with pytest.raises(LeakageError, match="--rerun-reason"):
+    with pytest.raises(ValueError, match="--rerun-reason"):
         _evaluate(workdir, cfgs, guard_path=guard)
-    with pytest.raises(LeakageError):
+    with pytest.raises(ValueError):
         _evaluate(workdir, cfgs, guard_path=guard, rerun_reason="   ")
     assert len(load_json(guard)["openings"]) == 1  # refusals record nothing
 
@@ -159,7 +158,7 @@ def test_training_hash_mismatch_is_refused(workdir: dict[str, Path], cfgs: Confi
     meta = load_json(meta_path)
     meta["train_sha256"] = "0" * 64
     save_json(meta, meta_path)
-    with pytest.raises(LeakageError, match="run_meta"):
+    with pytest.raises(ValueError, match="run_meta"):
         _evaluate(workdir, cfgs, guard_path=workdir["results"] / GUARD_FILE)
     assert not (workdir["results"] / GUARD_FILE).exists()  # refused before opening
 
@@ -169,7 +168,7 @@ def test_cells_subset_keeps_earlier_records(workdir: dict[str, Path], cfgs: Conf
     report = _evaluate(workdir, cfgs, cells=["logreg__smote"])
     assert report.evaluated == [("logreg", "smote")]
     assert {(r.model, r.technique) for r in report.comparison.records} == set(CELLS)
-    with pytest.raises(ConfigError, match="random_forest__rus"):
+    with pytest.raises(ValueError, match="random_forest__rus"):
         _evaluate(workdir, cfgs, cells=["random_forest__rus"])
 
 
@@ -212,7 +211,7 @@ def test_temporal_check_needs_the_test_evaluation_first(
         "cfgs": cfgs,
         "log": lambda _: None,
     }
-    with pytest.raises(LeakageError, match="evaluate_test.py first"):
+    with pytest.raises(ValueError, match="evaluate_test.py first"):
         temporal_check("sample", workdir["results"], workdir["models"], **kwargs)
     _evaluate(workdir, cfgs, guard_path=guard)
     temporal_check("sample", workdir["results"], workdir["models"], **kwargs)
@@ -220,7 +219,7 @@ def test_temporal_check_needs_the_test_evaluation_first(
         "evaluate_test",
         "temporal_check",
     ]
-    with pytest.raises(LeakageError, match="already opened by temporal_check"):
+    with pytest.raises(ValueError, match="already opened by temporal_check"):
         temporal_check("sample", workdir["results"], workdir["models"], **kwargs)
 
 

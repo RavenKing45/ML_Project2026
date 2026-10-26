@@ -13,8 +13,6 @@ from sklearn.base import BaseEstimator
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
-from fraudstudy.errors import ConfigError
-
 MODEL_NAMES: tuple[str, ...] = ("logreg", "random_forest", "lightgbm")
 # Models whose fits can use several cores (``n_jobs``); logistic regression (lbfgs, binary)
 # is single-threaded.
@@ -62,12 +60,12 @@ def get_model(name: str, seed: int, **params: Any) -> BaseEstimator:
         The unfitted estimator.
 
     Raises:
-        ConfigError: If ``name`` is unknown or ``params`` sets ``random_state``.
+        ValueError: If ``name`` is unknown or ``params`` sets ``random_state``.
     """
     if name not in _BUILDERS:
-        raise ConfigError(f"Unknown model {name!r}; available: {', '.join(MODEL_NAMES)}.")
+        raise ValueError(f"Unknown model {name!r}; available: {', '.join(MODEL_NAMES)}.")
     if "random_state" in params:
-        raise ConfigError(
+        raise ValueError(
             "Do not pass random_state; every model uses the seed from configs/experiment.yaml."
         )
     return _BUILDERS[name](int(seed), dict(params))

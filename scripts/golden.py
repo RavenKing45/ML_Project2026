@@ -18,17 +18,20 @@ import sys
 
 import pandas as pd
 
-from fraudstudy.paths import resolve
+from fraudstudy.config import resolve
 
 GOLDEN_DIR = resolve(".golden")
 OUT_DIR = resolve("artifacts/sample")
 TOLERANCE = 1e-9
 # Keys whose values are meant to differ between two identical runs: wall-clock times, run
-# durations, latency, the git commit (changes with every commit) and absolute paths (differ per
-# machine). Their presence is still compared, only their values are skipped.
+# durations (including the experiment cells' search, fit and predict times), latency, the git
+# commit (changes with every commit) and absolute paths (differ per machine). Their presence is
+# still compared, only their values are skipped.
 SKIP_KEYS = {
     "generated_at", "created_at", "timestamp", "elapsed", "elapsed_seconds", "duration_seconds",
     "latency_ms", "git_commit", "git_hash", "path", "model_path", "artifacts_dir",
+    "started_at", "finished_at", "evaluated_at", "search_seconds", "fit_seconds",
+    "predict_seconds", "total_seconds", "mean_fit_time",
 }
 
 
@@ -72,7 +75,7 @@ def compare(old: object, new: object, where: str, diffs: list[tuple[str, str, st
         both_nan = math.isnan(old) and math.isnan(new)
         if not both_nan and not math.isclose(old, new, rel_tol=TOLERANCE, abs_tol=TOLERANCE):
             diffs.append((where, repr(old), repr(new)))
-    elif old != new:
+    elif type(old) is not type(new) or old != new:  # the type check stops True == 1
         diffs.append((where, repr(old), repr(new)))
 
 

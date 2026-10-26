@@ -20,6 +20,7 @@ from PIL import Image
 from pydantic import ValidationError
 from scipy import stats as sps
 
+from fraudstudy.config import resolve
 from fraudstudy.contracts import (
     ComparisonTable,
     CurvesFile,
@@ -27,7 +28,6 @@ from fraudstudy.contracts import (
     ResamplingAudit,
     StatsResult,
 )
-from fraudstudy.errors import DataValidationError
 from fraudstudy.evaluation import figures
 from fraudstudy.evaluation import stats as st
 from fraudstudy.experiment import Configs, run_experiments
@@ -43,7 +43,6 @@ from fraudstudy.experiment.results import (
 )
 from fraudstudy.experiment.test_eval import COMPARISON_FILE, CURVES_FILE, SAMPLE_EVAL_DIR
 from fraudstudy.io import load_json, save_json
-from fraudstudy.paths import resolve
 
 MODELS = ["logreg", "random_forest", "lightgbm"]
 TECHNIQUES = ["baseline", "ros", "rus", "smote", "smote_rus", "class_weight"]
@@ -107,7 +106,7 @@ def test_nemenyi_cd_matches_demsar_2006() -> None:
 
 def test_cd_shrinks_with_more_blocks_and_rejects_bad_input() -> None:
     assert st.critical_difference(6, 45, 0.05) < st.critical_difference(6, 15, 0.05)
-    with pytest.raises(DataValidationError):
+    with pytest.raises(ValueError):
         st.critical_difference(1, 15, 0.05)
 
 
@@ -128,7 +127,7 @@ def test_wilcoxon_counts_and_effect_sizes() -> None:
     assert (r["wins"], r["ties"], r["losses"], r["n_pairs"]) == (2, 1, 1, 4)
     assert r["median_difference"] == pytest.approx(0.05)
     assert r["mean_difference"] == pytest.approx(0.0375)
-    with pytest.raises(DataValidationError):
+    with pytest.raises(ValueError):
         st.wilcoxon_paired([0.1, 0.2], [0.1])
 
 
@@ -140,7 +139,7 @@ def test_friedman_matches_scipy_with_ties() -> None:
     reference = sps.friedmanchisquare(*x.T)
     assert statistic == pytest.approx(reference.statistic)
     assert p == pytest.approx(reference.pvalue)
-    with pytest.raises(DataValidationError):
+    with pytest.raises(ValueError):
         st.friedman(pd.DataFrame(x[:, :2]))
 
 
@@ -206,20 +205,20 @@ def test_paired_scores_rejects_broken_pairing() -> None:
     scores = _fold_scores()
     bad_id = scores.copy()
     bad_id.loc[(bad_id["technique"] == "ros") & (bad_id["fold"] == 0), "fold_id"] = "other"
-    with pytest.raises(DataValidationError, match="different folds"):
+    with pytest.raises(ValueError, match="different folds"):
         st.paired_scores(bad_id, "logreg", TECHNIQUES)
     missing = scores.drop(scores.index[(scores["technique"] == "rus")][:1])
-    with pytest.raises(DataValidationError, match="lack scores"):
+    with pytest.raises(ValueError, match="lack scores"):
         st.paired_scores(missing, "logreg", TECHNIQUES)
-    with pytest.raises(DataValidationError, match="Duplicate"):
+    with pytest.raises(ValueError, match="Duplicate"):
         st.paired_scores(pd.concat([scores, scores.iloc[:1]]), "logreg", TECHNIQUES)
-    with pytest.raises(DataValidationError, match="No fold scores"):
+    with pytest.raises(ValueError, match="No fold scores"):
         st.paired_scores(scores, "svm", TECHNIQUES)
 
 
 def test_missing_baseline_is_an_error() -> None:
     scores = _fold_scores()
-    with pytest.raises(DataValidationError, match="baseline"):
+    with pytest.raises(ValueError, match="baseline"):
         _compute(scores[scores["technique"] != "baseline"])
 
 
@@ -328,13 +327,13 @@ def test_figures_are_300_dpi(example_artifacts: dict[str, object], tmp_path: Pat
 
 def test_figures_refuse_empty_inputs(tmp_path: Path) -> None:
     empty = ComparisonTable(dataset_source="synthetic", records=[])
-    with pytest.raises(DataValidationError):
+    with pytest.raises(ValueError):
         figures.plot_pr_auc_with_ci(empty, 0.95, tmp_path / "x.png")
-    with pytest.raises(DataValidationError):
+    with pytest.raises(ValueError):
         figures.plot_fold_boxplots(_fold_scores().iloc[:0], tmp_path / "x.png")
     audit = ResamplingAudit.model_validate(load_json(EXAMPLES / "resampling_audit.json"))
     audit = audit.model_copy(update={"entries": []})
-    with pytest.raises(DataValidationError):
+    with pytest.raises(ValueError):
         figures.resampling_counts_table(audit)
 
 
@@ -371,7 +370,7 @@ def sample_results(tmp_path_factory: pytest.TempPathFactory) -> Path:
 def test_source_fold_scores_filters_by_source(sample_results: Path) -> None:
     scores = source_fold_scores(sample_results, "sample")
     assert set(scores["technique"]) == set(TECHNIQUES)
-    with pytest.raises(DataValidationError, match="raw"):
+    with pytest.raises(ValueError, match="raw"):
         source_fold_scores(sample_results, "raw")
 
 

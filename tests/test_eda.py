@@ -11,12 +11,10 @@ from pydantic import ValidationError
 
 from fraudstudy import eda
 from fraudstudy import synthetic as syn
-from fraudstudy.config import get_dataset_config
+from fraudstudy.config import PROJECT_ROOT, get_dataset_config
 from fraudstudy.contracts import HOUR_ASSUMPTION, ClassCounts, EdaSummary
 from fraudstudy.data import deduplicate, load_dataset
-from fraudstudy.errors import DataValidationError
 from fraudstudy.io import load_json
-from fraudstudy.paths import PROJECT_ROOT
 
 MIN_FIGURE_BYTES = 10 * 1024
 
@@ -135,7 +133,7 @@ def test_cohens_d_matches_formula() -> None:
 
 def test_imbalance_ratio() -> None:
     assert eda.imbalance_ratio(ClassCounts(legit=284_315, fraud=492)) == "1 : 578"
-    with pytest.raises(DataValidationError):
+    with pytest.raises(ValueError):
         eda.imbalance_ratio(ClassCounts(legit=10, fraud=0))
 
 
@@ -158,9 +156,9 @@ def test_compute_rejects_single_class(
 ) -> None:
     raw, deduped = frames
     legit_only = deduped[deduped["Class"] == 0]
-    with pytest.raises(DataValidationError, match="both classes"):
+    with pytest.raises(ValueError, match="both classes"):
         eda.compute_eda_summary(raw, legit_only, cfg, dataset_source="synthetic", dataset_sha256="")
-    with pytest.raises(DataValidationError, match="deduplicated frame second"):
+    with pytest.raises(ValueError, match="deduplicated frame second"):
         eda.compute_eda_summary(deduped, raw, cfg, dataset_source="synthetic", dataset_sha256="")
 
 

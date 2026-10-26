@@ -38,6 +38,7 @@ from pydantic import ValidationError
 from backend.app.errors import ARTIFACT_UNAVAILABLE, ApiError, ArtifactError
 from backend.app.logging import LOGGER_NAME
 from backend.app.settings import Settings
+from fraudstudy.config import PROJECT_ROOT
 from fraudstudy.contracts import (
     ComparisonTable,
     CurvesFile,
@@ -52,8 +53,7 @@ from fraudstudy.contracts import (
 from fraudstudy.experiment.runner import library_versions
 from fraudstudy.explain import FeatureReference
 from fraudstudy.export import FEATURE_REFERENCE_FILE, PICKLE_LIBRARIES
-from fraudstudy.io import git_commit_hash, sha256_file
-from fraudstudy.paths import PROJECT_ROOT
+from fraudstudy.io import git_hash, sha256_file
 
 logger = logging.getLogger(f"{LOGGER_NAME}.artifacts")
 
@@ -572,7 +572,7 @@ def load_artifacts(settings: Settings) -> ArtifactStore:
         store.problems.append(
             f"Unexpected {type(exc).__name__} while loading artifacts; see the server log."
         )
-    store.git_hash = git_commit_hash()
+    store.git_hash = git_hash()
     return store
 
 

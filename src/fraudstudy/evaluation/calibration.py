@@ -34,7 +34,7 @@ def fit_isotonic(oof_scores: object, y: object) -> IsotonicRegression:
         The fitted ``IsotonicRegression``.
 
     Raises:
-        DataValidationError: If the inputs are invalid.
+        ValueError: If the inputs are invalid.
     """
     labels, s = check_inputs(y, oof_scores)
     low, high = PROBABILITY_RANGE

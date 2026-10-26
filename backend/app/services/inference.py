@@ -33,7 +33,6 @@ from fraudstudy.contracts import (
     ThresholdSource,
     Transaction,
 )
-from fraudstudy.errors import FraudStudyError
 from fraudstudy.evaluation import apply_calibrator
 from fraudstudy.explain import DEFAULT_TOP_K, FeatureReference, explain
 
@@ -246,7 +245,7 @@ def explanation_for(
         return None, [NO_REFERENCE_WARNING]
     try:
         return explain(model.pipeline, X, reference, top_k=DEFAULT_TOP_K), []
-    except FraudStudyError as exc:  # a model or reference the explainer cannot use
+    except ValueError as exc:  # a model or reference the explainer cannot use
         logger.warning("no explanation for model_id=%s (%s)", model.entry.id, type(exc).__name__)
         return None, [f"No explanation for {model.entry.id}: {exc}"]
 

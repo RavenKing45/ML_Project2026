@@ -14,18 +14,24 @@ import subprocess
 import sys
 import time
 
-from fraudstudy.paths import resolve
+from fraudstudy.config import resolve
 
 OUT_DIR = resolve("artifacts/sample")
 RESULTS = str(OUT_DIR / "results")
 FIGURES = str(OUT_DIR / "figures")
+MODELS = str(OUT_DIR / "models")
+TEST_EVAL = str(OUT_DIR / "test_eval")
 TIME_LIMIT_SECONDS = 600  # the whole run must stay under 10 minutes
 
 # Quick mode is meant for the 284k-row real file. On the 6000-row sample the quick subsample
 # leaves about 4 frauds per training fold, too few for SMOTE (k_neighbors=5), so the audit and
 # the baseline run on the full sample training split; that takes seconds anyway.
-# Later steps (experiment cells, merge, test evaluation, temporal check, stats, figures, export)
-# are added here as their scripts land.
+# The experiment cells do use --quick: on the sample it only cuts the folds, repeats and
+# n_iter (the training subsample applies to raw only), which keeps the cells fast. Random forest
+# is left out: with n_jobs=-1 it adds up its trees' votes in a different order on each run, so
+# two identical runs differ by about 1e-6 and the golden check could never pass. It uses the
+# same pipeline code as the other two models, and the tests cover it. merge_results.py is left
+# out too: it only copies cell files, and it fails when a configured model has no cells.
 STEPS = [
     ("data summary", ["data_summary.py", "--source", "sample"]),
     ("EDA", ["run_eda.py", "--source", "sample", "--results-dir", RESULTS,
@@ -33,6 +39,23 @@ STEPS = [
     ("resampling audit", ["run_resampling_audit.py", "--source", "sample",
                           "--results-dir", RESULTS]),
     ("baseline CV", ["run_baseline.py", "--source", "sample", "--results-dir", RESULTS]),
+    ("experiment cells", ["run_experiments.py", "--source", "sample", "--quick",
+                          "--models", "logreg", "lightgbm",
+                          "--results-dir", RESULTS, "--models-dir", MODELS]),
+    ("test evaluation", ["evaluate_test.py", "--source", "sample", "--results-dir", RESULTS,
+                         "--models-dir", MODELS, "--output-dir", TEST_EVAL]),
+    ("temporal check", ["run_temporal_check.py", "--source", "sample", "--model", "lightgbm",
+                        "--results-dir", RESULTS, "--models-dir", MODELS,
+                        "--output-dir", TEST_EVAL]),
+    ("stats", ["run_stats.py", "--source", "sample", "--results-dir", RESULTS,
+               "--output-dir", TEST_EVAL, "--figures-dir", FIGURES]),
+    ("figures", ["make_figures.py", "--source", "sample", "--results-dir", RESULTS,
+                 "--output-dir", TEST_EVAL, "--figures-dir", FIGURES]),
+    # The default cell is the team's choice on the real data; any LightGBM cell works here.
+    ("export", ["export_artifacts.py", "--source", "sample", "--default-cell", "lightgbm__smote",
+                "--results-dir", RESULTS, "--models-dir", MODELS,
+                "--out-models", str(OUT_DIR / "deploy"), "--out-demo", str(OUT_DIR / "demo"),
+                "--out-batch", str(OUT_DIR / "demo" / "demo_batch.csv")]),
 ]
 
 

@@ -19,13 +19,12 @@ import argparse
 import sys
 from pathlib import Path
 
+from fraudstudy.config import resolve
 from fraudstudy.contracts import ComparisonTable, CurvesFile, ResamplingAudit, StatsResult
-from fraudstudy.errors import DataValidationError, FraudStudyError
 from fraudstudy.evaluation.figures import figures_dir_for, make_all_figures
 from fraudstudy.experiment.results import source_fold_scores
 from fraudstudy.experiment.test_eval import COMPARISON_FILE, CURVES_FILE, output_dir_for
 from fraudstudy.io import load_json
-from fraudstudy.paths import resolve
 
 RESULTS_DIR = "artifacts/results"
 AUDIT_FILE = "resampling_audit.json"
@@ -35,7 +34,7 @@ STATS_FILE = "stats.json"
 def _load(path: Path, what: str, hint: str) -> object:
     """Load a JSON artifact or raise a clear error naming the script that writes it."""
     if not path.is_file():
-        raise DataValidationError(f"{what} not found at {path}; run {hint} first.")
+        raise ValueError(f"{what} not found at {path}; run {hint} first.")
     return load_json(path)
 
 
@@ -99,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         written = run(args.source, args.results_dir, args.output_dir, args.audit, args.figures_dir)
-    except FraudStudyError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     for name, path in written.items():

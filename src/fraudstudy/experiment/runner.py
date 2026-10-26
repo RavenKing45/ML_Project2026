@@ -40,11 +40,15 @@ from sklearn.model_selection import (
     train_test_split,
 )
 
-from fraudstudy.audit import resampling_audit
-from fraudstudy.config import get_dataset_config, get_experiment_config, get_models_config
+from fraudstudy.config import (
+    get_dataset_config,
+    get_experiment_config,
+    get_models_config,
+    resolve,
+    set_seed,
+)
 from fraudstudy.contracts import ClassCounts
 from fraudstudy.data import deduplicate, load_dataset, split_dataset
-from fraudstudy.errors import ConfigError, DataValidationError
 from fraudstudy.evaluation import best_threshold
 from fraudstudy.experiment.results import (
     Candidate,
@@ -58,22 +62,16 @@ from fraudstudy.experiment.results import (
     save_cell,
     write_run_meta,
 )
-from fraudstudy.io import git_commit_hash, sha256_file
+from fraudstudy.io import git_hash, sha256_file
 from fraudstudy.models import PARALLEL_MODELS
-from fraudstudy.paths import resolve
-from fraudstudy.pipeline import build_pipeline, without_model
+from fraudstudy.pipeline import build_pipeline
 from fraudstudy.sampling import (
-    BALANCED,
     CLASS_WEIGHT_PARAM,
-    FRAUD_WEIGHT_KEY,
-    SINGLE_SAMPLER,
-    STRATEGY_KEY,
-    SearchSpace,
     base_ratio,
+    resampling_audit,
     technique_search_space,
     valid_ratios,
 )
-from fraudstudy.seed import set_global_seed
 
 logger = logging.getLogger(__name__)
 
@@ -104,7 +102,7 @@ class Configs:
 
     @classmethod
     def load(cls) -> "Configs":
-        """Load all three from ``configs/`` (or ``FRAUDSTUDY_CONFIG_DIR``)."""
+        """Load all three from ``configs/``."""
         return cls(get_dataset_config(), get_experiment_config(), get_models_config())
 
 
@@ -152,18 +150,18 @@ def parallel_settings(exp_cfg: dict[str, Any]) -> tuple[int, int]:
     holds one resampled training fold at once.
 
     Raises:
-        ConfigError: If the ``parallel`` block is missing or incomplete.
+        ValueError: If the ``parallel`` block is missing or incomplete.
     """
     block = exp_cfg.get("parallel")
     if not isinstance(block, dict) or not {"model_n_jobs", "search_n_jobs"} <= set(block):
-        raise ConfigError(
+        raise ValueError(
             "experiment.yaml needs `parallel: {model_n_jobs: -1, search_n_jobs: 1}` "
             "(cores per model fit, and parallel search fits)."
         )
     return int(block["model_n_jobs"]), int(block["search_n_jobs"])
 
 
-def model_search_space(model: str, models_cfg: dict[str, Any]) -> SearchSpace:
+def model_search_space(model: str, models_cfg: dict[str, Any]) -> dict:
     """The model's hyper-parameter grid from ``models.yaml``, keys prefixed with ``model__``.
 
     Args:
@@ -174,21 +172,21 @@ def model_search_space(model: str, models_cfg: dict[str, Any]) -> SearchSpace:
         ``{"model__<param>": [values]}``.
 
     Raises:
-        ConfigError: If the model has no space, a value is not a non-empty list, or the space
+        ValueError: If the model has no space, a value is not a non-empty list, or the space
             sets the class weight (that is technique F's job).
     """
     space = models_cfg.get(model)
     if not isinstance(space, dict) or not space:
-        raise ConfigError(f"configs/models.yaml has no search space for model {model!r}.")
+        raise ValueError(f"configs/models.yaml has no search space for model {model!r}.")
     weight_param = CLASS_WEIGHT_PARAM.get(model)
     if weight_param in space:
-        raise ConfigError(
+        raise ValueError(
             f"configs/models.yaml must not tune {weight_param!r} for {model}; class weighting "
             "is technique 'class_weight'."
         )
     for key, values in space.items():
         if not isinstance(values, list) or not values:
-            raise ConfigError(
+            raise ValueError(
                 f"configs/models.yaml {model}.{key} must be a non-empty list; got {values!r}."
             )
     return {f"model__{key}": list(values) for key, values in space.items()}
@@ -200,7 +198,7 @@ def build_search_space(
     models_cfg: dict[str, Any],
     exp_cfg: dict[str, Any],
     base: float,
-) -> SearchSpace | list[SearchSpace]:
+) -> dict | list:
     """Model space + technique space; for a list-of-dicts technique space, merged into each dict.
 
     Args:
@@ -220,7 +218,7 @@ def build_search_space(
     return {**model_space, **tech_space}
 
 
-def space_size(space: SearchSpace | list[SearchSpace]) -> int:
+def space_size(space: dict | list) -> int:
     """Number of distinct configurations: ``sum over dicts of prod(len(values))``."""
     dicts = space if isinstance(space, list) else [space]
     return sum(math.prod(len(v) for v in d.values()) for d in dicts)
@@ -282,16 +280,16 @@ def ratio_info(
     Returns:
         The triple described above.
     """
-    if technique in SINGLE_SAMPLER:
-        return float(best_params[f"{SINGLE_SAMPLER[technique]}__{STRATEGY_KEY}"]), None, None
+    if technique in ("ros", "rus", "smote"):
+        return float(best_params[f"{technique}__sampling_strategy"]), None, None
     if technique == "smote_rus":
-        b = float(best_params[f"rus__{STRATEGY_KEY}"])
-        return b, float(best_params[f"smote__{STRATEGY_KEY}"]), None
+        b = float(best_params["rus__sampling_strategy"])
+        return b, float(best_params["smote__sampling_strategy"]), None
     if technique == "class_weight":
         weight_keys = {f"model__{param}" for param in CLASS_WEIGHT_PARAM.values()}
         weight = next(v for k, v in best_params.items() if k in weight_keys)
-        if weight == BALANCED:
-            return 1.0, None, BALANCED
+        if weight == "balanced":
+            return 1.0, None, "balanced"
         return float(weight) * base, None, float(weight)
     return None, None, None
 
@@ -303,7 +301,7 @@ def _check_enough_frauds(
     y_arr = np.asarray(y)
     fewest = min(int((y_arr[train] == 1).sum()) for train, _ in splits)
     if fewest == 0 or (technique.startswith("smote") and fewest <= k):
-        raise DataValidationError(
+        raise ValueError(
             f"A CV training fold has only {fewest} frauds; {technique} needs more than "
             f"smote_k_neighbors={k}. Use more data (drop --quick or use --source raw)."
         )
@@ -353,13 +351,13 @@ def run_cell(
         A :class:`CellResult` (record, out-of-fold scores, refitted best pipeline).
 
     Raises:
-        ConfigError: If the model, technique or config is invalid.
-        DataValidationError: If the data are unusable (too few frauds per fold, size mismatch).
+        ValueError: If the model, technique or config is invalid.
+        ValueError: If the data are unusable (too few frauds per fold, size mismatch).
     """
     started = datetime.now(UTC)
     t_start = time.perf_counter()
     if len(X_train) != len(y_train):
-        raise DataValidationError(f"X_train has {len(X_train)} rows but y_train {len(y_train)}.")
+        raise ValueError(f"X_train has {len(X_train)} rows but y_train {len(y_train)}.")
     exp_cfg = cfgs.experiment
     seed = int(exp_cfg["seed"])
     proto = get_protocol(exp_cfg, quick)
@@ -386,7 +384,7 @@ def run_cell(
         )
     model_params = {"n_jobs": model_n_jobs} if model in PARALLEL_MODELS else {}
     technique_params: dict[str, Any] = (
-        {FRAUD_WEIGHT_KEY: NEUTRAL_FRAUD_WEIGHT} if technique == "class_weight" else {}
+        {"fraud_weight": NEUTRAL_FRAUD_WEIGHT} if technique == "class_weight" else {}
     )
     pipe = build_pipeline(model, technique, model_params, technique_params, cfgs.dataset, exp_cfg)
 
@@ -438,7 +436,7 @@ def run_cell(
     pr = np.array([f.pr_auc for f in folds])
     roc = np.array([f.roc_auc for f in folds])
 
-    audit = resampling_audit(without_model(clone(best)), X_train, y_train)
+    audit = resampling_audit(best, X_train, y_train)
     best_params = scalar_params(search.best_params_)
     chosen, smote_ratio, weight = ratio_info(technique, best_params, base)
     grid = [float(r) for r in exp_cfg["ratio_grid"]]
@@ -473,9 +471,11 @@ def run_cell(
         cv_roc_auc_mean=float(roc.mean()),
         cv_roc_auc_std=float(roc.std()),
         fold_scores=folds,
-        n_train_after_resampling=ClassCounts(legit=audit.legit_after, fraud=audit.fraud_after),
-        n_synthetic=audit.n_synthetic,
-        fraud_duplicates_after=audit.fraud_duplicates_after,
+        n_train_after_resampling=ClassCounts(
+            legit=audit["legit_after"], fraud=audit["fraud_after"]
+        ),
+        n_synthetic=audit["n_synthetic"],
+        fraud_duplicates_after=audit["fraud_duplicates_after"],
         search_seconds=search_seconds,
         fit_seconds=float(search.refit_time_),
         predict_seconds=predict_seconds,
@@ -502,10 +502,10 @@ def stratified_subsample(
         ``(X_sub, y_sub)``.
 
     Raises:
-        ConfigError: If ``fraction`` is not positive.
+        ValueError: If ``fraction`` is not positive.
     """
     if fraction <= 0:
-        raise ConfigError(f"quick.train_fraction must be in (0, 1]; got {fraction}.")
+        raise ValueError(f"quick.train_fraction must be in (0, 1]; got {fraction}.")
     if fraction >= 1.0:
         return X, y
     X_sub, _, y_sub, _ = train_test_split(X, y, train_size=fraction, stratify=y, random_state=seed)
@@ -532,7 +532,7 @@ def load_training_data(
     df = load_dataset(source, verify_hash=verify_hash, cfg=cfgs.dataset)
     deduped, _ = deduplicate(df, target=cfgs.dataset["target"])
     split = split_dataset(deduped, cfgs.dataset, cfgs.experiment, strategy="stratified")
-    X, y = split.X_train, split.y_train
+    X, y = split["X_train"], split["y_train"]
     del split  # the test part is not used anywhere in the experiment runner
     if quick and source == "raw":
         fraction = get_protocol(cfgs.experiment, quick=True).train_fraction
@@ -542,10 +542,10 @@ def load_training_data(
 
 
 def _check_ids(kind: str, requested: list[str], allowed: list[str]) -> None:
-    """Raise ``ConfigError`` if ``requested`` has ids outside ``allowed``."""
+    """Raise ``ValueError`` if ``requested`` has ids outside ``allowed``."""
     unknown = [r for r in requested if r not in allowed]
     if unknown:
-        raise ConfigError(
+        raise ValueError(
             f"Unknown {kind} {', '.join(unknown)}; choose from {', '.join(allowed)} "
             "(configs/experiment.yaml)."
         )
@@ -581,7 +581,7 @@ def run_experiments(
         ``(record, "ran" | "skipped")`` per requested cell, in model-then-technique order.
 
     Raises:
-        ConfigError: If a requested model or technique is not in experiment.yaml.
+        ValueError: If a requested model or technique is not in experiment.yaml.
     """
     cfgs = cfgs if cfgs is not None else Configs.load()
     exp_cfg = cfgs.experiment
@@ -589,12 +589,13 @@ def run_experiments(
     techniques = list(techniques or exp_cfg["techniques"])
     _check_ids("model(s)", models, list(exp_cfg["models"]))
     _check_ids("technique(s)", techniques, list(exp_cfg["techniques"]))
-    seed = set_global_seed(int(exp_cfg["seed"]))
+    seed = int(exp_cfg["seed"])
+    set_seed(seed)
     started = datetime.now(UTC)
     t_run = time.perf_counter()
 
     X, y, data_sha = load_training_data(source, quick, cfgs, verify_hash)
-    commit = git_commit_hash()
+    commit = git_hash()
     cells = [(m, t) for m in models for t in techniques]
     log(
         f"source {source}{' (quick)' if quick else ''}: {len(y):,} training rows, "

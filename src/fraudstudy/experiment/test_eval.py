@@ -21,6 +21,7 @@ import pandas as pd
 from sklearn.base import clone
 from sklearn.metrics import average_precision_score, roc_auc_score
 
+from fraudstudy.config import resolve
 from fraudstudy.contracts import (
     MODEL_LABELS,
     TECHNIQUE_LABELS,
@@ -30,7 +31,6 @@ from fraudstudy.contracts import (
     CurvesFile,
 )
 from fraudstudy.data import deduplicate, load_dataset, split_dataset
-from fraudstudy.errors import ConfigError, DataValidationError, LeakageError
 from fraudstudy.evaluation import bootstrap_ci, compute_metrics, make_curves
 from fraudstudy.experiment.results import (
     CELLS_DIR,
@@ -46,8 +46,7 @@ from fraudstudy.experiment.runner import (
     stratified_subsample,
     training_sha256,
 )
-from fraudstudy.io import git_commit_hash, load_json, save_json, sha256_file
-from fraudstudy.paths import resolve
+from fraudstudy.io import git_hash, load_json, save_json, sha256_file
 
 logger = logging.getLogger(__name__)
 
@@ -121,13 +120,13 @@ def load_test_split(source: str, quick: bool, cfgs: Configs, verify_hash: bool =
     df = load_dataset(source, verify_hash=verify_hash, cfg=cfgs.dataset)
     deduped, _ = deduplicate(df, target=cfgs.dataset["target"])
     split = split_dataset(deduped, cfgs.dataset, cfgs.experiment, strategy="stratified")
-    X_train, y_train = split.X_train, split.y_train
+    X_train, y_train = split["X_train"], split["y_train"]
     if quick and source == "raw":
         fraction = get_protocol(cfgs.experiment, quick=True).train_fraction
         X_train, y_train = stratified_subsample(
             X_train, y_train, fraction, int(cfgs.experiment["seed"])
         )
-    return TestSplit(split.X_test, split.y_test, training_sha256(X_train, y_train))
+    return TestSplit(split["X_test"], split["y_test"], training_sha256(X_train, y_train))
 
 
 def check_training_hash(
@@ -136,18 +135,18 @@ def check_training_hash(
     """Raise unless the rebuilt training set is the one every cell (and run_meta) was tuned on.
 
     Raises:
-        LeakageError: On any mismatch (a different split would put training rows in the test
+        ValueError: On any mismatch (a different split would put training rows in the test
             set).
     """
     if run_meta is not None and run_meta.get("train_sha256") != train_sha256:
-        raise LeakageError(
+        raise ValueError(
             f"Training-set hash {train_sha256[:12]}... does not match run_meta.json "
             f"({str(run_meta.get('train_sha256'))[:12]}...). The data, dedup, split or seed "
             "changed since the cells were run; re-run scripts/run_experiments.py --force."
         )
     bad = [cell_id(r.model, r.technique) for r in records if r.train_sha256 != train_sha256]
     if bad:
-        raise LeakageError(
+        raise ValueError(
             f"Cells {', '.join(bad)} were tuned on a different training set than the current "
             "split; re-run them with scripts/run_experiments.py --force."
         )
@@ -163,7 +162,7 @@ def _opening(action: str, cells: list[tuple[str, str]], reason: str | None) -> d
     return {
         "opened_at": datetime.now(UTC).isoformat(timespec="seconds"),
         "action": action,
-        "git_commit": git_commit_hash(),
+        "git_commit": git_hash(),
         "cells": [cell_id(m, t) for m, t in cells],
         "reason": reason,
     }
@@ -207,7 +206,7 @@ def open_test_set(
         The guard file contents after the update.
 
     Raises:
-        LeakageError: If a repeat has no reason, or ``temporal_check`` runs before
+        ValueError: If a repeat has no reason, or ``temporal_check`` runs before
             ``evaluate_test``.
     """
     check_guard(guard_path, rerun_reason, action)
@@ -234,21 +233,21 @@ def check_guard(guard_path: Path | None, rerun_reason: str | None, action: str) 
     """Raise the guard's refusal early (before loading data) without recording anything.
 
     Raises:
-        LeakageError: As :func:`open_test_set` would.
+        ValueError: As :func:`open_test_set` would.
     """
     if guard_path is None:
         return
     path = Path(guard_path)
     if not path.is_file():
         if action != "evaluate_test":
-            raise LeakageError(
+            raise ValueError(
                 "The temporal check re-uses rows of the locked test set; run "
                 "scripts/evaluate_test.py first, so the single test evaluation comes before it."
             )
         return
     earlier = [o for o in load_json(path)["openings"] if o.get("action") == action]
     if earlier and not _clean_reason(rerun_reason or ""):
-        raise LeakageError(
+        raise ValueError(
             f"The test set was already opened by {action} ({earlier[0]['opened_at']}, see "
             f"{path}). Re-opening it biases the final estimate; if you must, pass "
             '--rerun-reason "<why>" (logged there and in docs/decisions.md). Never change a '
@@ -272,7 +271,7 @@ def _select_records(
             model, sep, technique = name.partition("__")
             path = cell_paths(model, technique, results_dir)["record"]
             if not sep or not path.is_file():
-                raise ConfigError(
+                raise ValueError(
                     f"No finished cell {name!r} (expected {path}); run scripts/run_experiments.py "
                     "for it first, or check the <model>__<technique> spelling."
                 )
@@ -281,16 +280,16 @@ def _select_records(
         records = finished_cells(results_dir, source)
     wrong = [cell_id(r.model, r.technique) for r in records if r.source != source]
     if wrong:
-        raise DataValidationError(
+        raise ValueError(
             f"Cells {', '.join(wrong)} were run on a different source than {source!r}."
         )
     if not records:
-        raise DataValidationError(
+        raise ValueError(
             f"No finished {source} cells in {Path(results_dir) / CELLS_DIR}; run "
             "scripts/run_experiments.py first."
         )
     if len({r.quick for r in records}) > 1:
-        raise DataValidationError("Cells mix quick and full runs; evaluate one mode at a time.")
+        raise ValueError("Cells mix quick and full runs; evaluate one mode at a time.")
     order = {
         (m, t): i
         for i, (m, t) in enumerate(
@@ -336,11 +335,11 @@ def evaluate_cell(
         test counts (not part of the 1.2 contract).
 
     Raises:
-        DataValidationError: If the record lacks an F1 or F2 threshold.
+        ValueError: If the record lacks an F1 or F2 threshold.
     """
     missing = [obj for obj in ("f1", "f2") if obj not in record.thresholds]
     if missing:
-        raise DataValidationError(
+        raise ValueError(
             f"{cell_id(record.model, record.technique)} has no {', '.join(missing)} threshold; "
             "re-run it with scripts/run_experiments.py --force."
         )
@@ -425,8 +424,8 @@ def evaluate_test(
         An :class:`EvalReport`.
 
     Raises:
-        LeakageError: If the guard refuses, or the training set differs from the cells'.
-        ConfigError / DataValidationError: If cells, files or data are missing or invalid.
+        ValueError: If the guard refuses, or the training set differs from the cells'.
+        ValueError / ValueError: If cells, files or data are missing or invalid.
     """
     cfgs = cfgs if cfgs is not None else Configs.load()
     results_dir = Path(results_dir)
@@ -442,7 +441,7 @@ def evaluate_test(
     for r in records:
         path = cell_paths(r.model, r.technique, results_dir, models_dir)["pipeline"]
         if not path.is_file():
-            raise DataValidationError(
+            raise ValueError(
                 f"Fitted pipeline {path} is missing; copy it from the machine that ran the cell "
                 "or re-run the cell."
             )
@@ -548,7 +547,7 @@ def temporal_check(
         The ``temporal_check.json`` contents (also written).
 
     Raises:
-        LeakageError: On raw, if the test set was not evaluated yet, or the check already ran
+        ValueError: On raw, if the test set was not evaluated yet, or the check already ran
             and no reason was given.
     """
     cfgs = cfgs if cfgs is not None else Configs.load()
@@ -564,7 +563,7 @@ def temporal_check(
         if r.model == model and r.technique in techniques
     ]
     if not records:
-        raise DataValidationError(
+        raise ValueError(
             f"No finished {source} cells for model {model!r} in {results_dir / CELLS_DIR}."
         )
     order = {t: i for i, t in enumerate(cfgs.experiment["techniques"])}
@@ -577,10 +576,11 @@ def temporal_check(
     deduped, _ = deduplicate(df, target=cfgs.dataset["target"])
     split = split_dataset(deduped, cfgs.dataset, cfgs.experiment, strategy="temporal")
     time_col = cfgs.dataset["time_column"]
-    cutoff = float(deduped.loc[split.X_test.index, time_col].min())
+    cutoff = float(deduped.loc[split["X_test"].index, time_col].min())
+    y_train, y_test = split["y_train"], split["y_test"]
     log(
-        f"temporal split: train {len(split.y_train):,} rows ({int(split.y_train.sum())} frauds), "
-        f"test {len(split.y_test):,} rows ({int(split.y_test.sum())} frauds), Time cutoff "
+        f"temporal split: train {len(y_train):,} rows ({int(y_train.sum())} frauds), "
+        f"test {len(y_test):,} rows ({int(y_test.sum())} frauds), Time cutoff "
         f"{cutoff:.0f} s"
     )
 
@@ -594,15 +594,15 @@ def temporal_check(
             continue
         pipe = clone(joblib.load(path))
         try:
-            pipe.fit(split.X_train, split.y_train)
+            pipe.fit(split["X_train"], split["y_train"])
         except ValueError as exc:  # e.g. a ratio at or below the temporal train ratio
             skipped.append({"cell": name, "reason": f"refit failed: {exc}"})
             log(f"{name:<26} skipped ({exc})")
             continue
-        scores = np.asarray(pipe.predict_proba(split.X_test)[:, 1], dtype=float)
-        pr_ci, roc_ci = _cis(split.y_test, scores, cfgs.experiment)
-        at_half = compute_metrics(split.y_test, scores, DEFAULT_THRESHOLD)
-        at_tuned = compute_metrics(split.y_test, scores, r.thresholds["f1"])
+        scores = np.asarray(pipe.predict_proba(split["X_test"])[:, 1], dtype=float)
+        pr_ci, roc_ci = _cis(split["y_test"], scores, cfgs.experiment)
+        at_half = compute_metrics(split["y_test"], scores, DEFAULT_THRESHOLD)
+        at_tuned = compute_metrics(split["y_test"], scores, r.thresholds["f1"])
         cells_out.append(
             {
                 "model": r.model,
@@ -625,12 +625,12 @@ def temporal_check(
         "dataset_source": DATASET_SOURCE[source],
         "model": model,
         "created_at": datetime.now(UTC).isoformat(timespec="seconds"),
-        "git_commit": git_commit_hash(),
+        "git_commit": git_hash(),
         "split": {
             "strategy": "temporal",
             "time_cutoff_seconds": cutoff,
-            "train": {"rows": len(split.y_train), "frauds": int(split.y_train.sum())},
-            "test": {"rows": len(split.y_test), "frauds": int(split.y_test.sum())},
+            "train": {"rows": len(split["y_train"]), "frauds": int(split["y_train"].sum())},
+            "test": {"rows": len(split["y_test"]), "frauds": int(split["y_test"].sum())},
         },
         "cells": cells_out,
         "skipped": skipped,

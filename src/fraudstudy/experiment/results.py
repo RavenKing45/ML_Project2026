@@ -29,7 +29,6 @@ from imblearn.pipeline import Pipeline
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from fraudstudy.contracts import ClassCounts
-from fraudstudy.errors import DataValidationError
 from fraudstudy.io import load_json, save_json
 
 logger = logging.getLogger(__name__)
@@ -223,14 +222,14 @@ def read_fold_scores(path: Path) -> pd.DataFrame:
     """Read ``fold_scores.csv``; an empty frame with :data:`FOLD_COLUMNS` if it does not exist.
 
     Raises:
-        DataValidationError: If the file lacks required columns.
+        ValueError: If the file lacks required columns.
     """
     if not Path(path).is_file():
         return pd.DataFrame(columns=list(FOLD_COLUMNS))
     df = pd.read_csv(path, dtype={"fold_id": str})
     missing = [c for c in FOLD_COLUMNS if c not in df.columns]
     if missing:
-        raise DataValidationError(
+        raise ValueError(
             f"{path} is missing columns {', '.join(missing)}; delete it and re-run with --force."
         )
     return df[list(FOLD_COLUMNS)]
@@ -248,7 +247,7 @@ def source_fold_scores(results_dir: Path, source: str) -> pd.DataFrame:
         The matching rows (:data:`FOLD_COLUMNS`), index reset.
 
     Raises:
-        DataValidationError: If there are no fold scores of finished ``source`` cells.
+        ValueError: If there are no fold scores of finished ``source`` cells.
     """
     records = [load_cell_record(p) for p in sorted((Path(results_dir) / CELLS_DIR).glob("*.json"))]
     cells = {(r.model, r.technique) for r in records if r.source == source}
@@ -257,7 +256,7 @@ def source_fold_scores(results_dir: Path, source: str) -> pd.DataFrame:
     keep = [(m, t) in cells for m, t in zip(scores["model"], scores["technique"], strict=True)]
     scores = scores[keep].reset_index(drop=True)
     if scores.empty:
-        raise DataValidationError(
+        raise ValueError(
             f"No fold scores of finished {source} cells in {path}; run "
             f"scripts/run_experiments.py --source {source} first."
         )
@@ -317,12 +316,12 @@ def load_cell_record(path: Path) -> CellRecord:
     """Read and validate a cell JSON file.
 
     Raises:
-        DataValidationError: If the file is not a valid :class:`CellRecord`.
+        ValueError: If the file is not a valid :class:`CellRecord`.
     """
     try:
         return CellRecord.model_validate(load_json(path))
     except (ValidationError, ValueError) as exc:
-        raise DataValidationError(
+        raise ValueError(
             f"{path} is not a valid cell record ({exc}); re-run the cell with --force."
         ) from exc
 
@@ -357,7 +356,7 @@ def is_cell_done(
         return False
     try:
         rec = load_cell_record(paths["record"])
-    except DataValidationError as exc:
+    except ValueError as exc:
         logger.warning("%s", exc)
         return False
     if (rec.quick, rec.source, rec.seed) != (quick, source, seed):
@@ -423,13 +422,13 @@ def _check_comparable(records: list[CellRecord]) -> None:
     for key in keys:
         values = {getattr(r, key) for r in records}
         if len(values) > 1:
-            raise DataValidationError(
+            raise ValueError(
                 f"Cells disagree on {key} ({sorted(map(str, values))}); they come from "
                 "different protocols or data and cannot be compared. Re-run the odd ones."
             )
     fold_sets = {frozenset(f.fold_id for f in r.fold_scores) for r in records}
     if len(fold_sets) > 1:
-        raise DataValidationError(
+        raise ValueError(
             "Cells have different repeated-CV folds, so paired tests are invalid. Re-run them "
             "with the same seed and data."
         )
@@ -458,7 +457,7 @@ def merge_results(
         A :class:`MergeReport`.
 
     Raises:
-        DataValidationError: If no cell is found, a file is invalid, or cells are not comparable
+        ValueError: If no cell is found, a file is invalid, or cells are not comparable
             (different seed, mode, data or folds).
     """
     found: dict[tuple[str, str], tuple[CellRecord, Path]] = {}
@@ -479,7 +478,7 @@ def merge_results(
                     continue
             found[key] = (rec, path)
     if not found:
-        raise DataValidationError(
+        raise ValueError(
             f"No cell records found under {[str(d) for d in input_dirs]} (expected "
             f"<dir>/{CELLS_DIR}/<model>__<technique>.json). Run scripts/run_experiments.py first."
         )

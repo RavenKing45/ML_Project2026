@@ -34,6 +34,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
+from fraudstudy.config import resolve
 from fraudstudy.contracts import (
     MODEL_LABELS,
     TECHNIQUE_LABELS,
@@ -45,7 +46,6 @@ from fraudstudy.contracts import (
     Transaction,
 )
 from fraudstudy.data import deduplicate, load_dataset, split_dataset
-from fraudstudy.errors import ConfigError, DataValidationError, LeakageError
 from fraudstudy.evaluation import fit_isotonic
 from fraudstudy.experiment.results import RUN_META_FILE, CellRecord, cell_paths, load_cell_record
 from fraudstudy.experiment.runner import (
@@ -71,8 +71,7 @@ from fraudstudy.explain import (
     check_range_percentiles,
     feature_map,
 )
-from fraudstudy.io import git_commit_hash, load_json, save_json, sha256_file
-from fraudstudy.paths import resolve
+from fraudstudy.io import git_hash, load_json, save_json, sha256_file
 
 logger = logging.getLogger(__name__)
 
@@ -236,17 +235,17 @@ def parse_cell(name: str, techniques: list[str]) -> tuple[str, str]:
     """Split a deployable ``"<model>__<technique>"`` id.
 
     Raises:
-        ConfigError: If the id is malformed, the model is not deployable, or the technique is
+        ValueError: If the id is malformed, the model is not deployable, or the technique is
             not in experiment.yaml.
     """
     model, sep, technique = str(name).partition("__")
     if not sep or technique not in techniques:
-        raise ConfigError(
+        raise ValueError(
             f"{name!r} is not a <model>__<technique> id with a technique from experiment.yaml "
             f"({', '.join(techniques)})."
         )
     if model not in DEPLOYABLE_MODELS:
-        raise ConfigError(
+        raise ValueError(
             f"{name!r} cannot be deployed: only {', '.join(DEPLOYABLE_MODELS)} fit on the 512 MB "
             "server (master guide Part 11). Random forest results stay in comparison.json."
         )
@@ -268,25 +267,25 @@ def deploy_settings(exp_cfg: dict[str, Any], default_cell: str | None = None) ->
         The :class:`DeploySettings`.
 
     Raises:
-        ConfigError: If the block is missing or invalid (including ``input_range_percentiles``
+        ValueError: If the block is missing or invalid (including ``input_range_percentiles``
             not being ``[low, high]`` with ``0 <= low < high <= 100``), or no default cell is
             given.
     """
     block = exp_cfg.get("deploy")
     if not isinstance(block, dict) or not set(DEPLOY_KEYS) <= set(block):
-        raise ConfigError(
+        raise ValueError(
             f"experiment.yaml needs a `deploy` block with {', '.join(DEPLOY_KEYS)} "
             "(see scripts/export_artifacts.py)."
         )
     configured = block["default_cell"]
     if default_cell and configured and default_cell != configured:
-        raise ConfigError(
+        raise ValueError(
             f"--default-cell {default_cell} disagrees with deploy.default_cell {configured} in "
             "experiment.yaml; give one or make them equal."
         )
     chosen = default_cell or configured
     if not chosen:
-        raise ConfigError(
+        raise ValueError(
             "No default cell given. The TEAM chooses it from the cross-validation results "
             "(artifacts/results/cv_summary.json); it is never picked automatically. Pass "
             "--default-cell <model>__<technique> or set deploy.default_cell in "
@@ -301,15 +300,15 @@ def deploy_settings(exp_cfg: dict[str, Any], default_cell: str | None = None) ->
         if name not in cells:
             cells.append(name)
     if chosen not in cells:
-        raise ConfigError(f"Default cell {chosen} must be one of deploy.cells ({cells}).")
+        raise ValueError(f"Default cell {chosen} must be one of deploy.cells ({cells}).")
     threshold = str(block["default_threshold"])
     if threshold not in THRESHOLD_OBJECTIVES:
-        raise ConfigError(f"deploy.default_threshold must be f1 or f2; got {threshold!r}.")
+        raise ValueError(f"deploy.default_threshold must be f1 or f2; got {threshold!r}.")
     p, batch = block["presets"], block["demo_batch"]
     low, high = (float(v) for v in p["everyday_amount"])
     rows, frauds = int(batch["rows"]), int(batch["frauds"])
     if not 0 <= frauds <= rows:
-        raise ConfigError(f"deploy.demo_batch needs 0 <= frauds <= rows; got {frauds}, {rows}.")
+        raise ValueError(f"deploy.demo_batch needs 0 <= frauds <= rows; got {frauds}, {rows}.")
     return DeploySettings(
         cells=cells,
         default_cell=chosen,
@@ -334,8 +333,8 @@ def load_cells(
     """Load and cross-check the records of the deployed cells.
 
     Raises:
-        ConfigError: If a cell has no finished record, pipeline or out-of-fold file.
-        DataValidationError: If a cell ran on another source, or the cells disagree on seed,
+        ValueError: If a cell has no finished record, pipeline or out-of-fold file.
+        ValueError: If a cell ran on another source, or the cells disagree on seed,
             mode, training data or data file.
     """
     records: dict[str, CellRecord] = {}
@@ -348,23 +347,23 @@ def load_cells(
             continue
         records[name] = load_cell_record(paths["record"])
     if missing:
-        raise ConfigError(
+        raise ValueError(
             f"Cells {', '.join(missing)} have no finished record, out-of-fold scores and pipeline "
             f"under {results_dir} / {models_dir}; run scripts/run_experiments.py for them (or "
             "copy them from the machine that did)."
         )
     wrong = [n for n, r in records.items() if r.source != source]
     if wrong:
-        raise DataValidationError(f"Cells {', '.join(wrong)} were not run on source {source!r}.")
+        raise ValueError(f"Cells {', '.join(wrong)} were not run on source {source!r}.")
     for key in ("seed", "quick", "train_sha256", "data_sha256"):
         values = {str(getattr(r, key)) for r in records.values()}
         if len(values) > 1:
-            raise DataValidationError(
+            raise ValueError(
                 f"Deployed cells disagree on {key} ({sorted(values)}); re-run the odd ones so "
                 "every deployed model comes from the same protocol and data."
             )
     if next(iter(records.values())).data_sha256 is None:
-        raise DataValidationError("Cell records lack data_sha256; re-run them with the runner.")
+        raise ValueError("Cell records lack data_sha256; re-run them with the runner.")
     return records
 
 
@@ -375,7 +374,7 @@ def check_library_versions(records: dict[str, CellRecord]) -> dict[str, str]:
         The current :func:`library_versions` (written to the manifest).
 
     Raises:
-        ConfigError: On any mismatch.
+        ValueError: On any mismatch.
     """
     current = library_versions()
     bad = [
@@ -385,7 +384,7 @@ def check_library_versions(records: dict[str, CellRecord]) -> dict[str, str]:
         if r.library_versions.get(lib) != current.get(lib)
     ]
     if bad:
-        raise ConfigError(
+        raise ValueError(
             "Export with the library versions the cells were trained with (pip install -r "
             f"requirements.txt), so the pickles load identically: {'; '.join(bad)}."
         )
@@ -401,12 +400,12 @@ def check_test_evaluated(
     ``required`` is false (sample runs).
 
     Raises:
-        DataValidationError: If the details are missing (when required), a cell was not
+        ValueError: If the details are missing (when required), a cell was not
             evaluated, or a pipeline file changed since the evaluation.
     """
     if not details_path.is_file():
         if required:
-            raise DataValidationError(
+            raise ValueError(
                 f"{details_path} not found; run scripts/evaluate_test.py before exporting."
             )
         return
@@ -416,13 +415,13 @@ def check_test_evaluated(
     }
     for name, r in records.items():
         if name not in evaluated:
-            raise DataValidationError(
+            raise ValueError(
                 f"{name} was not evaluated on the test set ({details_path}); deploy only "
                 "evaluated cells, so the served model is the one whose metrics are reported."
             )
         pipeline = cell_paths(r.model, r.technique, Path(), models_dir)["pipeline"]
         if sha256_file(pipeline) != evaluated[name]:
-            raise DataValidationError(
+            raise ValueError(
                 f"{pipeline} changed after the test evaluation; restore the evaluated file."
             )
 
@@ -436,7 +435,7 @@ def load_export_data(source: str, quick: bool, cfgs: Configs, verify_hash: bool)
     df = load_dataset(source, verify_hash=verify_hash, cfg=cfgs.dataset)
     deduped, _ = deduplicate(df, target=cfgs.dataset["target"])
     split = split_dataset(deduped, cfgs.dataset, cfgs.experiment, strategy="stratified")
-    X_train, y_train = split.X_train, split.y_train
+    X_train, y_train = split["X_train"], split["y_train"]
     if quick and source == "raw":
         fraction = get_protocol(cfgs.experiment, quick=True).train_fraction
         X_train, y_train = stratified_subsample(
@@ -445,9 +444,9 @@ def load_export_data(source: str, quick: bool, cfgs: Configs, verify_hash: bool)
     return ExportData(
         X_train=X_train,
         y_train=y_train,
-        X_test=split.X_test,
-        y_test=split.y_test,
-        test_rows=deduped.loc[split.X_test.index],
+        X_test=split["X_test"],
+        y_test=split["y_test"],
+        test_rows=deduped.loc[split["X_test"].index],
         n_rows=len(df),
         train_sha256=training_sha256(X_train, y_train),
     )
@@ -465,14 +464,14 @@ def save_deploy_pipeline(pipeline: Any, path: Path, X_check: pd.DataFrame) -> st
         The file's SHA-256.
 
     Raises:
-        DataValidationError: If the reloaded pipeline scores ``X_check`` differently.
+        ValueError: If the reloaded pipeline scores ``X_check`` differently.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(pipeline, path, compress=JOBLIB_COMPRESS)
     before = pipeline.predict_proba(X_check)[:, 1]
     after = joblib.load(path).predict_proba(X_check)[:, 1]
     if not np.array_equal(before, after):
-        raise DataValidationError(f"{path} scores differently after reloading; do not deploy it.")
+        raise ValueError(f"{path} scores differently after reloading; do not deploy it.")
     return sha256_file(path)
 
 
@@ -487,7 +486,7 @@ def check_same_preprocessing(
         pre = pipe.named_steps["preprocess"]
         got = np.asarray(pre.transform(X_train), dtype=float).mean(axis=0)
         if feature_map(pre) != expected or not np.allclose(got, means, rtol=1e-9, atol=1e-12):
-            raise DataValidationError(
+            raise ValueError(
                 f"{name}'s preprocessor differs from the default cell's; all deployed cells "
                 "must be fitted on the same training rows."
             )
@@ -642,10 +641,10 @@ def export_artifacts(
         An :class:`ExportReport`.
 
     Raises:
-        ConfigError: If no default cell is given or the deploy settings, cells or library
+        ValueError: If no default cell is given or the deploy settings, cells or library
             versions are invalid.
-        DataValidationError: If files are missing, inconsistent or changed since evaluation.
-        LeakageError: If the guard refuses or the training set differs from the cells'.
+        ValueError: If files are missing, inconsistent or changed since evaluation.
+        ValueError: If the guard refuses or the training set differs from the cells'.
     """
     cfgs = cfgs if cfgs is not None else Configs.load()
     settings = deploy_settings(cfgs.experiment, default_cell)
@@ -661,7 +660,7 @@ def export_artifacts(
     check_test_evaluated(records, details, models_dir, required=source == "raw")
     if guard_path is not None:
         if not Path(guard_path).is_file():
-            raise LeakageError(
+            raise ValueError(
                 "Presets and the demo batch are test-set rows; run scripts/evaluate_test.py "
                 "first, so the single test evaluation comes before them."
             )
@@ -704,7 +703,7 @@ def export_artifacts(
         if settings.calibrate:
             oof = np.load(cell_paths(r.model, r.technique, results_dir)["oof"])
             if len(oof) != len(data.y_train):
-                raise DataValidationError(
+                raise ValueError(
                     f"{name}: {len(oof)} out-of-fold scores for {len(data.y_train)} training rows."
                 )
             cal_path = deploy_dir / f"{name}{CALIBRATOR_SUFFIX}"
@@ -762,7 +761,7 @@ def export_artifacts(
 
     manifest = Manifest(
         created_at=datetime.now(UTC).isoformat(timespec="seconds"),
-        git_commit=git_commit_hash(),
+        git_commit=git_hash(),
         seed=first.seed,
         quick_mode=first.quick,
         dataset=DatasetInfo(

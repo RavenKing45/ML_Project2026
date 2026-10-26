@@ -20,7 +20,7 @@ from lightgbm import LGBMClassifier
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
-from fraudstudy.errors import ConfigError, DataValidationError
+from fraudstudy.config import resolve
 from fraudstudy.evaluation import best_threshold
 from fraudstudy.experiment import (
     Configs,
@@ -51,7 +51,6 @@ from fraudstudy.experiment.runner import (
 )
 from fraudstudy.io import load_json, save_json
 from fraudstudy.models import MODEL_NAMES, get_model
-from fraudstudy.paths import resolve
 from fraudstudy.pipeline import build_pipeline
 
 MODELS = ["logreg", "lightgbm"]
@@ -115,9 +114,9 @@ def test_get_model_types_and_seed() -> None:
 
 
 def test_get_model_rejects_unknown_and_random_state() -> None:
-    with pytest.raises(ConfigError, match="Unknown model 'svm'"):
+    with pytest.raises(ValueError, match="Unknown model 'svm'"):
         get_model("svm", 1)
-    with pytest.raises(ConfigError, match="random_state"):
+    with pytest.raises(ValueError, match="random_state"):
         get_model("logreg", 1, random_state=3)
 
 
@@ -134,9 +133,9 @@ def test_pipeline_builds_every_model(model: str, cfgs: Configs) -> None:
 def test_model_space_is_prefixed_and_rejects_class_weight(cfgs: Configs) -> None:
     space = model_search_space("logreg", cfgs.models)
     assert space == {f"model__{k}": v for k, v in cfgs.models["logreg"].items()}
-    with pytest.raises(ConfigError, match="class_weight"):
+    with pytest.raises(ValueError, match="class_weight"):
         model_search_space("logreg", {"logreg": {"C": [1], "class_weight": ["balanced"]}})
-    with pytest.raises(ConfigError, match="non-empty list"):
+    with pytest.raises(ValueError, match="non-empty list"):
         model_search_space("logreg", {"logreg": {"C": 1}})
 
 
@@ -210,7 +209,7 @@ def test_stratified_subsample_keeps_fraud_rate(training: tuple[Any, ...]) -> Non
     assert len(y_sub) == pytest.approx(len(y) / 2, abs=1)
     assert y_sub.mean() == pytest.approx(y.mean(), abs=0.002)
     assert stratified_subsample(X, y, 1.0, 42)[0] is X
-    with pytest.raises(ConfigError):
+    with pytest.raises(ValueError):
         stratified_subsample(X, y, 0.0, 42)
 
 
@@ -222,7 +221,7 @@ def test_run_cell_accepts_training_data_only() -> None:
 def test_run_cell_rejects_too_few_frauds(training: tuple[Any, ...], cfgs: Configs) -> None:
     X, y, _ = training
     keep = (y == 0) | (y.cumsum() <= 8)  # 8 frauds: training folds hold ~5 <= k_neighbors
-    with pytest.raises(DataValidationError, match="frauds"):
+    with pytest.raises(ValueError, match="frauds"):
         run_cell("logreg", "smote", X[keep], y[keep], cfgs, quick=True)
 
 
@@ -415,9 +414,9 @@ def test_merge_rejects_incomparable_cells(quick_run: dict[str, Any], tmp_path: P
     data = load_json(path)
     data["train_sha256"] = "0" * 64
     save_json(data, path)
-    with pytest.raises(DataValidationError, match="train_sha256"):
+    with pytest.raises(ValueError, match="train_sha256"):
         merge_results([a, b], tmp_path / "out", MODELS, TECHNIQUES)
-    with pytest.raises(DataValidationError, match="No cell records"):
+    with pytest.raises(ValueError, match="No cell records"):
         merge_results([tmp_path / "empty"], tmp_path / "out", MODELS, TECHNIQUES)
 
 

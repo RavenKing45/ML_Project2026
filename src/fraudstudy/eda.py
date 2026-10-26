@@ -35,7 +35,6 @@ from fraudstudy.contracts import (
     Histogram,
     HourOfDay,
 )
-from fraudstudy.errors import DataValidationError
 
 N_BINS = 20
 N_TOP_FEATURES = 6
@@ -110,7 +109,7 @@ def imbalance_ratio(class_counts: ClassCounts) -> str:
         e.g. ``"1 : 578"`` for the real dataset.
     """
     if class_counts.fraud == 0:
-        raise DataValidationError("Cannot compute an imbalance ratio with zero fraud rows.")
+        raise ValueError("Cannot compute an imbalance ratio with zero fraud rows.")
     return f"1 : {round(class_counts.legit / class_counts.fraud)}"
 
 
@@ -272,20 +271,20 @@ def compute_eda_summary(
         The validated :class:`EdaSummary`.
 
     Raises:
-        DataValidationError: If ``df_dedup`` has more rows than ``df_raw`` or either class is
+        ValueError: If ``df_dedup`` has more rows than ``df_raw`` or either class is
             missing from ``df_dedup``.
     """
     target, amount_col, time_col = cfg["target"], cfg["amount_column"], cfg["time_column"]
     pca = list(cfg["pca_features"])
     if len(df_dedup) > len(df_raw):
-        raise DataValidationError(
+        raise ValueError(
             f"df_dedup has {len(df_dedup)} rows but df_raw only {len(df_raw)}; pass the "
             "deduplicated frame second."
         )
     y = df_dedup[target]
     is_fraud = (y == 1).to_numpy()
     if is_fraud.all() or not is_fraud.any():
-        raise DataValidationError("EDA needs both classes in the deduplicated data.")
+        raise ValueError("EDA needs both classes in the deduplicated data.")
     legit_df, fraud_df = df_dedup.loc[~is_fraud], df_dedup.loc[is_fraud]
 
     raw_counts = _class_counts(df_raw[target])

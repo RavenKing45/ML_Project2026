@@ -208,7 +208,7 @@ resampling that equal no row given to the samplers.
 | field | type | meaning |
 |-------|------|---------|
 | created_at | str | ISO 8601 UTC |
-| git_commit | str \| null | `fraudstudy.io.git_commit_hash()` |
+| git_commit | str \| null | `fraudstudy.io.git_hash()` |
 | seed, quick_mode | int, bool | run settings |
 | dataset | `{name, source, sha256, n_rows}` | training data |
 | default_model_id | str \| null | must be one of `models[].id` |

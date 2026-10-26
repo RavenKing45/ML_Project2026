@@ -17,7 +17,6 @@ from collections.abc import Callable, Iterator
 import numpy as np
 from sklearn.metrics import average_precision_score, roc_auc_score
 
-from fraudstudy.errors import DataValidationError
 from fraudstudy.evaluation.metrics import check_inputs
 
 MetricFn = Callable[[np.ndarray, np.ndarray], float]
@@ -46,11 +45,11 @@ def bootstrap_ci(
         ``(low, high)``.
 
     Raises:
-        DataValidationError: If the inputs are invalid, ``n_resamples < 1`` or ``confidence``
+        ValueError: If the inputs are invalid, ``n_resamples < 1`` or ``confidence``
             is not in (0, 1).
     """
     if not 0.0 < confidence < 1.0:
-        raise DataValidationError(f"confidence must be in (0, 1); got {confidence}.")
+        raise ValueError(f"confidence must be in (0, 1); got {confidence}.")
     stats = bootstrap_distribution(y_true, scores, metric_fn, n_resamples, seed)
     tail = (1.0 - confidence) / 2.0
     low, high = np.quantile(stats, [tail, 1.0 - tail])
@@ -73,11 +72,11 @@ def bootstrap_distribution(
         Array of shape ``(n_resamples,)``.
 
     Raises:
-        DataValidationError: If the inputs are invalid or ``n_resamples < 1``.
+        ValueError: If the inputs are invalid or ``n_resamples < 1``.
     """
     y, s = check_inputs(y_true, scores)
     if n_resamples < 1:
-        raise DataValidationError(f"n_resamples must be at least 1; got {n_resamples}.")
+        raise ValueError(f"n_resamples must be at least 1; got {n_resamples}.")
     fraud_idx, legit_idx = np.flatnonzero(y == 1), np.flatnonzero(y == 0)
     draws = _stratified_draws(fraud_idx, legit_idx, n_resamples, seed)
     if metric_fn is average_precision_score or metric_fn is roc_auc_score:

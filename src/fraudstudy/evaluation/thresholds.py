@@ -9,7 +9,6 @@ from typing import Literal
 import numpy as np
 from sklearn.metrics import precision_recall_curve
 
-from fraudstudy.errors import ConfigError
 from fraudstudy.evaluation.metrics import F2_BETA, check_inputs
 
 Objective = Literal["f1", "f2"]
@@ -51,11 +50,11 @@ def best_threshold(y_true: object, oof_scores: object, objective: Objective) -> 
         The chosen threshold (one of the observed scores).
 
     Raises:
-        ConfigError: If ``objective`` is not ``"f1"`` or ``"f2"``.
-        DataValidationError: If the inputs are invalid.
+        ValueError: If ``objective`` is not ``"f1"`` or ``"f2"``.
+        ValueError: If the inputs are invalid.
     """
     if objective not in OBJECTIVE_BETA:
-        raise ConfigError(
+        raise ValueError(
             f"Unknown threshold objective '{objective}'; use one of {sorted(OBJECTIVE_BETA)}."
         )
     y, s = check_inputs(y_true, oof_scores)

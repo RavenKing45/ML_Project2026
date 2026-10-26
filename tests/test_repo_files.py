@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from fraudstudy.paths import PROJECT_ROOT, resolve
+from fraudstudy.config import PROJECT_ROOT, resolve
 
 NOTEBOOK_PACKAGES = ("jupyter", "jupyterlab", "notebook", "ipykernel")
 MODEL_BUILD = "-e ./model_build"

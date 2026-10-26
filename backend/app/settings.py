@@ -4,7 +4,7 @@ Each variable is its field name in upper case (master guide Part 11, "Configurat
 ``ARTIFACTS_DIR``, ``MODELS_DIR``, ``USE_EXAMPLE_ARTIFACTS``, ``EXAMPLES_DIR``,
 ``ALLOWED_ORIGINS``, ``ENVIRONMENT``, ``DEFAULT_MODEL_ID``, ``MAX_UPLOAD_MB``, ``MAX_BATCH_ROWS``,
 ``LOG_LEVEL``, ``RATE_LIMIT_ENABLED``. Relative paths resolve from the project root
-(``fraudstudy.paths``), not from the working directory.
+(``fraudstudy.config.resolve``), not from the working directory.
 """
 
 from functools import lru_cache
@@ -14,7 +14,7 @@ from typing import Any, Literal
 from pydantic import PositiveFloat, PositiveInt, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from fraudstudy.paths import PROJECT_ROOT, resolve
+from fraudstudy.config import PROJECT_ROOT, resolve
 
 ENV_FILE = ".env"
 # The Vite dev server; allowed automatically in development (master guide Part 11).

@@ -1,11 +1,12 @@
-"""Write the synthetic sample dataset to ``sample_path`` from configs/dataset.yaml.
+"""Write the synthetic sample dataset to sample_path from configs/dataset.yaml.
 
 Usage::
 
     python scripts/generate_synthetic_data.py [--n-rows 6000] [--fraud-rate 0.015] [--seed N]
+                                              [--out PATH]
 
-The seed defaults to ``seed`` in configs/experiment.yaml. Prints row count, fraud count,
-duplicate count and the file's SHA-256.
+The seed defaults to `seed` in configs/experiment.yaml. Prints the row, fraud and duplicate
+counts and the file's SHA-256 (tests/test_synthetic.py checks the committed file matches).
 """
 
 import argparse
@@ -13,22 +14,13 @@ from pathlib import Path
 
 import pandas as pd
 
-from fraudstudy.config import get_dataset_config, get_experiment_config
+from fraudstudy.config import get_dataset_config, get_experiment_config, resolve
 from fraudstudy.io import sha256_file
-from fraudstudy.paths import resolve
 from fraudstudy.synthetic import make_synthetic
 
 
 def write_csv(df: pd.DataFrame, path: str | Path) -> Path:
-    """Write ``df`` as CSV with ``\\n`` line endings so the bytes (and hash) match on every OS.
-
-    Args:
-        df: Dataset to write.
-        path: Destination file; parent folders are created.
-
-    Returns:
-        The path written.
-    """
+    """Write `df` as CSV with \\n line endings, so the bytes (and the hash) match on every OS."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(path, index=False, lineterminator="\n")
@@ -36,14 +28,7 @@ def write_csv(df: pd.DataFrame, path: str | Path) -> Path:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Parse arguments, generate the dataset, write it and print a summary.
-
-    Args:
-        argv: Command-line arguments (defaults to ``sys.argv[1:]``).
-
-    Returns:
-        Process exit code (0 on success).
-    """
+    """Generate the dataset, write it and print a summary."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--n-rows", type=int, default=6000)
     parser.add_argument("--fraud-rate", type=float, default=0.015)

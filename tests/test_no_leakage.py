@@ -22,7 +22,7 @@ from sklearn.base import BaseEstimator, clone
 from sklearn.model_selection import StratifiedKFold, cross_validate
 
 from fraudstudy.config import get_dataset_config, get_experiment_config, get_models_config
-from fraudstudy.data import Split, deduplicate, load_dataset, split_dataset
+from fraudstudy.data import deduplicate, load_dataset, split_dataset
 from fraudstudy.pipeline import build_pipeline
 
 RATIO = 0.1
@@ -69,7 +69,7 @@ def cfg() -> dict[str, Any]:
 
 @pytest.fixture(scope="module")
 def exp_cfg() -> dict[str, Any]:
-    return {**get_experiment_config(), "use_hour_feature": False}
+    return get_experiment_config()
 
 
 @pytest.fixture(scope="module")
@@ -78,7 +78,7 @@ def deduped(cfg: dict[str, Any]) -> pd.DataFrame:
 
 
 @pytest.fixture(scope="module")
-def split(deduped: pd.DataFrame, cfg: dict[str, Any], exp_cfg: dict[str, Any]) -> Split:
+def split(deduped: pd.DataFrame, cfg: dict[str, Any], exp_cfg: dict[str, Any]) -> dict:
     return split_dataset(deduped, cfg, exp_cfg)
 
 
@@ -98,11 +98,11 @@ def _spied_pipeline(technique: str, key: str, cfg: dict[str, Any], exp_cfg: dict
 
 @pytest.mark.parametrize("technique", sorted(TECHNIQUE_PARAMS))
 def test_sampler_sees_only_training_fold_rows(
-    technique: str, split: Split, cfg: dict[str, Any], exp_cfg: dict[str, Any]
+    technique: str, split: dict, cfg: dict[str, Any], exp_cfg: dict[str, Any]
 ) -> None:
     key = f"cv-{technique}"
     pipe = _spied_pipeline(technique, key, cfg, exp_cfg)
-    X, y = split.X_train, split.y_train
+    X, y = split["X_train"], split["y_train"]
     cv = StratifiedKFold(n_splits=exp_cfg["cv_folds"], shuffle=True, random_state=exp_cfg["seed"])
     result = cross_validate(
         pipe, X, y, cv=cv, scoring="average_precision", return_indices=True, error_score="raise"
@@ -123,18 +123,18 @@ def test_sampler_sees_only_training_fold_rows(
 
 @pytest.mark.parametrize("technique", sorted(TECHNIQUE_PARAMS))
 def test_prediction_skips_samplers(
-    technique: str, split: Split, cfg: dict[str, Any], exp_cfg: dict[str, Any]
+    technique: str, split: dict, cfg: dict[str, Any], exp_cfg: dict[str, Any]
 ) -> None:
     key = f"predict-{technique}"
     pipe = _spied_pipeline(technique, key, cfg, exp_cfg)
-    pipe.fit(split.X_train, split.y_train)
+    pipe.fit(split["X_train"], split["y_train"])
     assert len(SpySampler.log[key]) == 1
-    assert set(SpySampler.log[key][0]) == set(split.X_train.index)
+    assert set(SpySampler.log[key][0]) == set(split["X_train"].index)
 
-    scores = pipe.predict_proba(split.X_test)
-    labels = pipe.predict(split.X_test)
-    assert scores.shape == (len(split.X_test), 2)
-    assert len(labels) == len(split.X_test)
+    scores = pipe.predict_proba(split["X_test"])
+    labels = pipe.predict(split["X_test"])
+    assert scores.shape == (len(split["X_test"]), 2)
+    assert len(labels) == len(split["X_test"])
     assert len(SpySampler.log[key]) == 1  # nothing recorded while predicting
 
 
@@ -179,7 +179,7 @@ def _synthetic_from_test_frauds(
 
 
 def test_smote_before_split_leaks_test_frauds_into_training(
-    deduped: pd.DataFrame, split: Split, cfg: dict[str, Any], exp_cfg: dict[str, Any]
+    deduped: pd.DataFrame, split: dict, cfg: dict[str, Any], exp_cfg: dict[str, Any]
 ) -> None:
     """The wrong protocol leaks; the correct one (SMOTE on training rows only) cannot.
 
@@ -189,10 +189,10 @@ def test_smote_before_split_leaks_test_frauds_into_training(
     RIGHT: inside the pipeline SMOTE runs in ``fit`` on training rows only (tests a/b above),
     so every synthetic point is interpolated between two TRAINING frauds.
     """
-    X_all = deduped[list(split.X_train.columns)]
+    X_all = deduped[list(split["X_train"].columns)]
     y_all = deduped[cfg["target"]]
     frauds_all = X_all[y_all == 1]
-    test_index = split.X_test.index
+    test_index = split["X_test"].index
 
     def smote() -> SMOTE:
         return SMOTE(
@@ -211,5 +211,5 @@ def test_smote_before_split_leaks_test_frauds_into_training(
 
     # Correct protocol, made visible: fit_resample on the TRAINING split only (what the
     # pipeline's SMOTE step does inside fit). Same detector, searching ALL frauds.
-    X_right, _ = smote().fit_resample(split.X_train, split.y_train)
-    assert _synthetic_from_test_frauds(X_right, len(split.X_train), frauds_all, test_index) == 0
+    X_right, _ = smote().fit_resample(split["X_train"], split["y_train"])
+    assert _synthetic_from_test_frauds(X_right, len(split["X_train"]), frauds_all, test_index) == 0

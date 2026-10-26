@@ -17,6 +17,7 @@ import pandas as pd
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 
+from fraudstudy.config import resolve
 from fraudstudy.contracts import (
     MODEL_LABELS,
     TECHNIQUE_LABELS,
@@ -29,8 +30,6 @@ from fraudstudy.contracts import (
     StatsResult,
 )
 from fraudstudy.eda import FIGURE_DPI, FIGURE_STYLE
-from fraudstudy.errors import DataValidationError
-from fraudstudy.paths import resolve
 
 TECHNIQUE_ORDER: tuple[str, ...] = tuple(TECHNIQUE_LABELS)
 MODEL_ORDER: tuple[str, ...] = tuple(MODEL_LABELS)
@@ -129,7 +128,7 @@ def _cells(records: Sequence[ComparisonRecord], model: str) -> list[ComparisonRe
 def _require(records: Sequence[ComparisonRecord]) -> None:
     """Raise if there is nothing to plot."""
     if not records:
-        raise DataValidationError(
+        raise ValueError(
             "comparison.json has no records; run scripts/evaluate_test.py before the figures."
         )
 
@@ -528,10 +527,10 @@ def plot_fold_boxplots(fold_scores: pd.DataFrame, path: Path) -> Path:
         ``path``.
 
     Raises:
-        DataValidationError: If there are no fold scores.
+        ValueError: If there are no fold scores.
     """
     if fold_scores.empty:
-        raise DataValidationError("fold_scores.csv is empty; run scripts/run_experiments.py.")
+        raise ValueError("fold_scores.csv is empty; run scripts/run_experiments.py.")
     models = [m for m in MODEL_ORDER if (fold_scores["model"] == m).any()]
     rng = np.random.default_rng(0)  # jitter only, not part of any result
     with matplotlib.rc_context(FIGURE_STYLE):
@@ -597,7 +596,7 @@ def resampling_counts_table(audit: ResamplingAudit) -> pd.DataFrame:
         if e.technique in RESAMPLERS
     ]
     if not rows:
-        raise DataValidationError(
+        raise ValueError(
             "resampling_audit.json has no resampler entries; run scripts/run_resampling_audit.py."
         )
     df = pd.DataFrame(rows)

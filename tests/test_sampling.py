@@ -1,5 +1,5 @@
-"""Tests for fraudstudy.sampling, fraudstudy.audit, the techniques in build_pipeline and
-scripts/run_resampling_audit.py (synthetic sample only).
+"""Tests for fraudstudy.sampling (samplers, search spaces, class weights, resampling audit), the
+techniques in build_pipeline and scripts/run_resampling_audit.py (synthetic sample only).
 
 Some tests call ``fit_resample`` directly to inspect resampled rows. They do so on the
 TRAINING split only; library code only ever runs samplers inside a pipeline.
@@ -17,21 +17,25 @@ from imblearn.pipeline import Pipeline as ImbPipeline
 from imblearn.under_sampling import RandomUnderSampler
 from sklearn.model_selection import RandomizedSearchCV, StratifiedKFold
 
-from fraudstudy.audit import ResamplingAudit, resampling_audit, row_hashes
-from fraudstudy.config import get_dataset_config, get_experiment_config, get_models_config
+from fraudstudy.config import (
+    PROJECT_ROOT,
+    get_dataset_config,
+    get_experiment_config,
+    get_models_config,
+)
 from fraudstudy.contracts import ResamplingAudit as ResamplingAuditFile
-from fraudstudy.data import Split, deduplicate, load_dataset, split_dataset
-from fraudstudy.errors import ConfigError, DataValidationError
-from fraudstudy.features import build_preprocessor
+from fraudstudy.data import deduplicate, load_dataset, split_dataset
 from fraudstudy.io import load_json
-from fraudstudy.paths import PROJECT_ROOT
-from fraudstudy.pipeline import build_pipeline, without_model
+from fraudstudy.pipeline import build_pipeline
+from fraudstudy.preprocess import build_preprocessor
 from fraudstudy.sampling import (
     TECHNIQUES,
     base_ratio,
     build_sampler_steps,
     class_weight_model_params,
     fraud_weight,
+    resampling_audit,
+    row_hashes,
     technique_search_space,
     valid_ratios,
 )
@@ -54,27 +58,27 @@ def cfg() -> dict[str, Any]:
 
 @pytest.fixture(scope="module")
 def exp_cfg() -> dict[str, Any]:
-    return {**get_experiment_config(), "use_hour_feature": False}
+    return get_experiment_config()
 
 
 @pytest.fixture(scope="module")
-def split(cfg: dict[str, Any], exp_cfg: dict[str, Any]) -> Split:
+def split(cfg: dict[str, Any], exp_cfg: dict[str, Any]) -> dict:
     deduped = deduplicate(load_dataset("sample", cfg=cfg))[0]
     return split_dataset(deduped, cfg, exp_cfg)
 
 
 @pytest.fixture(scope="module")
-def base(split: Split) -> float:
-    return base_ratio(split.y_train)
+def base(split: dict) -> float:
+    return base_ratio(split["y_train"])
 
 
 @pytest.fixture(scope="module")
 def train_pre(
-    split: Split, cfg: dict[str, Any], exp_cfg: dict[str, Any]
+    split: dict, cfg: dict[str, Any], exp_cfg: dict[str, Any]
 ) -> tuple[pd.DataFrame, pd.Series]:
     """Preprocessed TRAINING rows (the space the samplers work in)."""
-    pre = build_preprocessor(cfg, exp_cfg)
-    return pre.fit_transform(split.X_train), split.y_train
+    pre = build_preprocessor(cfg)
+    return pre.fit_transform(split["X_train"]), split["y_train"]
 
 
 def _logreg_params() -> dict[str, Any]:
@@ -87,10 +91,10 @@ def _ratio(y: pd.Series | np.ndarray) -> float:
 
 
 def _audit(
-    technique: str, params: dict[str, Any], split: Split, cfg: dict[str, Any], exp_cfg: dict
-) -> ResamplingAudit:
+    technique: str, params: dict[str, Any], split: dict, cfg: dict[str, Any], exp_cfg: dict
+) -> dict:
     pipe = build_pipeline("logreg", technique, None, params, cfg, exp_cfg)
-    return resampling_audit(without_model(pipe), split.X_train, split.y_train)
+    return resampling_audit(pipe, split["X_train"], split["y_train"])
 
 
 # --- build_sampler_steps ------------------------------------------------------------------------
@@ -128,29 +132,24 @@ def test_sampler_steps_pass_ratios() -> None:
     [
         ("baseline", {"ratio": 0.1}, "no parameters"),
         ("ros", {"ratio": 0.1}, "unknown parameters ratio"),
-        ("smote", {"sampling_strategy": 0.0}, r"ratio in \(0, 1\]"),
-        ("rus", {"sampling_strategy": 1.5}, r"ratio in \(0, 1\]"),
-        ("rus", {"sampling_strategy": "0.1"}, r"ratio in \(0, 1\]"),
-        (
-            "smote_rus",
-            {"smote_sampling_strategy": 0.5, "rus_sampling_strategy": 0.1},
-            "a < rus ratio b",
-        ),
+        ("smote_rus", {"sampling_strategy": 0.1}, "unknown parameters sampling_strategy"),
         ("adasyn", {}, "technique 'adasyn'"),
     ],
 )
-def test_sampler_steps_reject_bad_input(technique: str, params: dict, match: str) -> None:
-    with pytest.raises(ConfigError, match=match):
-        build_sampler_steps(technique, params, 0, 5)
+def test_build_pipeline_rejects_bad_technique_params(
+    technique: str, params: dict, match: str, cfg: dict[str, Any], exp_cfg: dict[str, Any]
+) -> None:
+    with pytest.raises(ValueError, match=match):
+        build_pipeline("logreg", technique, None, params, cfg, exp_cfg)
 
 
 # --- ratios and weights -------------------------------------------------------------------------
 
 
-def test_base_ratio(split: Split) -> None:
-    y = split.y_train
+def test_base_ratio(split: dict) -> None:
+    y = split["y_train"]
     assert base_ratio(y) == pytest.approx((y == 1).sum() / (y == 0).sum())
-    with pytest.raises(DataValidationError, match="both classes"):
+    with pytest.raises(ValueError, match="both classes"):
         base_ratio(np.zeros(5))
 
 
@@ -159,7 +158,7 @@ def test_valid_ratios_drops_and_logs(caplog: pytest.LogCaptureFixture) -> None:
         kept = valid_ratios([0.005, 0.01, 0.0105, 0.0106, 0.1], 0.01)
     assert kept == [0.0106, 0.1]  # 0.0105 == 0.01 * 1.05 is not strictly greater
     assert "Dropped ratios [0.005, 0.01, 0.0105]" in caplog.text
-    with pytest.raises(ConfigError, match="ratio_grid"):
+    with pytest.raises(ValueError, match="ratio_grid"):
         valid_ratios([0.001], 0.01)
 
 
@@ -168,11 +167,11 @@ def test_fraud_weight_and_model_params() -> None:
     assert class_weight_model_params("logreg", 50.0) == {"class_weight": {0: 1.0, 1: 50.0}}
     assert class_weight_model_params("random_forest", "balanced") == {"class_weight": "balanced"}
     assert class_weight_model_params("lightgbm", 50.0) == {"scale_pos_weight": 50.0}
-    with pytest.raises(ConfigError, match="no 'balanced'"):
+    with pytest.raises(ValueError, match="no 'balanced'"):
         class_weight_model_params("lightgbm", "balanced")
-    with pytest.raises(ConfigError, match="positive number"):
+    with pytest.raises(ValueError, match="positive number"):
         class_weight_model_params("logreg", -1.0)
-    with pytest.raises(ConfigError, match="svm"):
+    with pytest.raises(ValueError, match="svm"):
         class_weight_model_params("svm", 1.0)
 
 
@@ -214,12 +213,12 @@ def test_search_space_class_weight(exp_cfg: dict[str, Any], base: float) -> None
     assert all(v[0] == 1.0 for v in values[:-1])
     lgbm = technique_search_space("class_weight", exp_cfg, base, model_name="lightgbm")
     assert lgbm == {"model__scale_pos_weight": pytest.approx([r / base for r in ratios])}
-    with pytest.raises(ConfigError, match="Unknown technique"):
+    with pytest.raises(ValueError, match="Unknown technique"):
         technique_search_space("adasyn", exp_cfg, base)
 
 
 def test_search_spaces_are_accepted_by_randomized_search(
-    split: Split, cfg: dict[str, Any], exp_cfg: dict[str, Any], base: float
+    split: dict, cfg: dict[str, Any], exp_cfg: dict[str, Any], base: float
 ) -> None:
     for technique in ("smote_rus", "class_weight"):
         pipe = build_pipeline("logreg", technique, _logreg_params(), cfg=cfg, exp_cfg=exp_cfg)
@@ -232,7 +231,7 @@ def test_search_spaces_are_accepted_by_randomized_search(
             random_state=0,
             error_score="raise",
         )
-        search.fit(split.X_train, split.y_train)
+        search.fit(split["X_train"], split["y_train"])
         assert 0.0 < search.best_score_ <= 1.0
 
 
@@ -251,19 +250,19 @@ EXPECTED_STEPS = {
 
 @pytest.mark.parametrize("technique", TECHNIQUES)
 def test_build_pipeline_every_technique_with_logreg(
-    technique: str, split: Split, cfg: dict[str, Any], exp_cfg: dict[str, Any]
+    technique: str, split: dict, cfg: dict[str, Any], exp_cfg: dict[str, Any]
 ) -> None:
     pipe = build_pipeline("logreg", technique, _logreg_params(), cfg=cfg, exp_cfg=exp_cfg)
     assert isinstance(pipe, ImbPipeline)
     assert [name for name, _ in pipe.steps] == EXPECTED_STEPS[technique]
     if "smote" in pipe.named_steps:
         assert pipe.named_steps["smote"].k_neighbors == exp_cfg["smote_k_neighbors"]
-    space = technique_search_space(technique, exp_cfg, base_ratio(split.y_train))
+    space = technique_search_space(technique, exp_cfg, base_ratio(split["y_train"]))
     first = space[0] if isinstance(space, list) else space
     pipe.set_params(**{k: v[0] for k, v in first.items()})
-    pipe.fit(split.X_train, split.y_train)
-    scores = pipe.predict_proba(split.X_test)
-    assert scores.shape == (len(split.X_test), 2)
+    pipe.fit(split["X_train"], split["y_train"])
+    scores = pipe.predict_proba(split["X_test"])
+    assert scores.shape == (len(split["X_test"]), 2)
     assert np.all(np.isfinite(scores))
 
 
@@ -280,17 +279,10 @@ def test_build_pipeline_class_weight(cfg: dict[str, Any], exp_cfg: dict[str, Any
         .class_weight
         is None
     )
-    with pytest.raises(ConfigError, match="class weighting is technique"):
+    with pytest.raises(ValueError, match="class weighting is technique"):
         build_pipeline(
             "logreg", "smote", model_params={"class_weight": "balanced"}, cfg=cfg, exp_cfg=exp_cfg
         )
-
-
-def test_without_model(cfg: dict[str, Any], exp_cfg: dict[str, Any]) -> None:
-    pipe = build_pipeline("logreg", "smote_rus", cfg=cfg, exp_cfg=exp_cfg)
-    assert [n for n, _ in without_model(pipe).steps] == ["preprocess", "smote", "rus"]
-    with pytest.raises(ConfigError, match="last step is 'model'"):
-        without_model(without_model(pipe))
 
 
 # --- what each technique does to the training data ----------------------------------------------
@@ -351,28 +343,28 @@ def test_rus_keeps_only_original_rows(
     )
 
 
-def test_audit_ros_rus_smote(split: Split, cfg: dict[str, Any], exp_cfg: dict[str, Any]) -> None:
-    before_legit = int((split.y_train == 0).sum())
-    before_fraud = int((split.y_train == 1).sum())
+def test_audit_ros_rus_smote(split: dict, cfg: dict[str, Any], exp_cfg: dict[str, Any]) -> None:
+    before_legit = int((split["y_train"] == 0).sum())
+    before_fraud = int((split["y_train"] == 1).sum())
     ros = _audit("ros", {"sampling_strategy": RATIO}, split, cfg, exp_cfg)
-    assert (ros.legit_before, ros.fraud_before) == (before_legit, before_fraud)
-    assert ros.ratio_after == pytest.approx(RATIO, rel=REL_TOL)
-    assert ros.fraud_unique_after == before_fraud and ros.n_synthetic == 0
-    assert ros.fraud_duplicates_after == ros.fraud_after - before_fraud > 0
+    assert (ros["legit_before"], ros["fraud_before"]) == (before_legit, before_fraud)
+    assert ros["ratio_after"] == pytest.approx(RATIO, rel=REL_TOL)
+    assert ros["fraud_unique_after"] == before_fraud and ros["n_synthetic"] == 0
+    assert ros["fraud_duplicates_after"] == ros["fraud_after"] - before_fraud > 0
 
     rus = _audit("rus", {"sampling_strategy": RATIO}, split, cfg, exp_cfg)
-    assert rus.legit_after < before_legit and rus.fraud_after == before_fraud
-    assert rus.n_synthetic == 0 and rus.fraud_duplicates_after == 0
+    assert rus["legit_after"] < before_legit and rus["fraud_after"] == before_fraud
+    assert rus["n_synthetic"] == 0 and rus["fraud_duplicates_after"] == 0
 
     smote = _audit("smote", {"sampling_strategy": RATIO}, split, cfg, exp_cfg)
-    assert smote.ratio_after == pytest.approx(RATIO, rel=REL_TOL)
-    assert smote.n_synthetic == smote.fraud_after - before_fraud > 0
-    assert smote.fraud_duplicates_after == 0
+    assert smote["ratio_after"] == pytest.approx(RATIO, rel=REL_TOL)
+    assert smote["n_synthetic"] == smote["fraud_after"] - before_fraud > 0
+    assert smote["fraud_duplicates_after"] == 0
 
 
 @pytest.mark.parametrize("b", [0.1, 0.5, 1.0])
 def test_smote_rus_final_ratio_is_b(
-    b: float, split: Split, cfg: dict[str, Any], exp_cfg: dict[str, Any]
+    b: float, split: dict, cfg: dict[str, Any], exp_cfg: dict[str, Any]
 ) -> None:
     a = 0.05
     result = _audit(
@@ -382,36 +374,29 @@ def test_smote_rus_final_ratio_is_b(
         cfg,
         exp_cfg,
     )
-    assert result.ratio_after == pytest.approx(b, rel=REL_TOL)
+    assert result["ratio_after"] == pytest.approx(b, rel=REL_TOL)
     # SMOTE first brought fraud to a * (all legit); RUS then only removed legit rows.
-    assert result.fraud_after == pytest.approx(a * result.legit_before, abs=1)
-    assert result.n_synthetic == result.fraud_after - result.fraud_before
+    assert result["fraud_after"] == pytest.approx(a * result["legit_before"], abs=1)
+    assert result["n_synthetic"] == result["fraud_after"] - result["fraud_before"]
 
 
 @pytest.mark.parametrize("technique", ["baseline", "class_weight"])
 def test_no_sampler_techniques_leave_data_unchanged(
     technique: str,
-    split: Split,
+    split: dict,
     cfg: dict[str, Any],
     exp_cfg: dict[str, Any],
     train_pre: tuple[pd.DataFrame, pd.Series],
 ) -> None:
     params = {"fraud_weight": 10.0} if technique == "class_weight" else {}
-    pipe = without_model(build_pipeline("logreg", technique, None, params, cfg, exp_cfg))
-    result = resampling_audit(pipe, split.X_train, split.y_train)
-    assert (result.legit_after, result.fraud_after) == (result.legit_before, result.fraud_before)
-    assert result.n_synthetic == 0 and result.fraud_duplicates_after == 0
+    pipe = build_pipeline("logreg", technique, None, params, cfg, exp_cfg)
+    result = resampling_audit(pipe, split["X_train"], split["y_train"])
+    assert result["legit_after"] == result["legit_before"]
+    assert result["fraud_after"] == result["fraud_before"]
+    assert result["n_synthetic"] == 0 and result["fraud_duplicates_after"] == 0
     assert not hasattr(pipe.named_steps["preprocess"], "transformers_")  # argument not fitted
-    out = pipe.fit_transform(split.X_train, split.y_train)
+    out = pipe[:-1].fit_transform(split["X_train"], split["y_train"])  # every step but the model
     pd.testing.assert_frame_equal(out, train_pre[0])
-
-
-def test_audit_rejects_bad_input(split: Split, cfg: dict[str, Any], exp_cfg: dict) -> None:
-    pipe = build_pipeline("logreg", "ros", cfg=cfg, exp_cfg=exp_cfg)
-    with pytest.raises(ConfigError, match="without its model"):
-        resampling_audit(pipe, split.X_train, split.y_train)
-    with pytest.raises(DataValidationError, match="rows"):
-        resampling_audit(without_model(pipe), split.X_train, split.y_train.iloc[:-1])
 
 
 # --- scripts/run_resampling_audit.py ------------------------------------------------------------
@@ -422,15 +407,15 @@ def test_audit_settings_use_the_shared_grid(exp_cfg: dict[str, Any], base: float
     ratios = valid_ratios(list(exp_cfg["ratio_grid"]), base)
     by_technique: dict[str, list[float | None]] = {}
     for s in settings:
-        by_technique.setdefault(s.technique, []).append(s.ratio)
+        by_technique.setdefault(s["technique"], []).append(s["ratio"])
     assert by_technique["baseline"] == [None]
     for technique in ("ros", "rus", "smote", "class_weight"):
         assert by_technique[technique] == ratios
     assert set(by_technique["smote_rus"]) <= set(ratios)
 
 
-def test_run_audit_sample(split: Split, cfg: dict[str, Any], exp_cfg: dict[str, Any]) -> None:
-    audit = _script.run_audit(split.X_train, split.y_train, cfg, exp_cfg, 3)
+def test_run_audit_sample(split: dict, cfg: dict[str, Any], exp_cfg: dict[str, Any]) -> None:
+    audit = _script.run_audit(split["X_train"], split["y_train"], cfg, exp_cfg, 3)
     assert audit.all_checks_passed and audit.test_rows_resampled == 0
     assert all(e.validation_untouched for e in audit.entries)
     assert audit.dropped_ratios == [
@@ -439,7 +424,7 @@ def test_run_audit_sample(split: Split, cfg: dict[str, Any], exp_cfg: dict[str, 
     for e in audit.entries:
         assert e.validation.legit + e.validation.fraud + e.train_before.legit + (
             e.train_before.fraud
-        ) == len(split.y_train)
+        ) == len(split["y_train"])
         if e.technique in ("baseline", "class_weight"):
             assert e.train_after == e.train_before
         elif e.ratio is not None:
@@ -457,13 +442,13 @@ def test_main_quick_sample_has_too_few_frauds(
 
 
 def test_run_audit_needs_enough_frauds(
-    split: Split, cfg: dict[str, Any], exp_cfg: dict[str, Any]
+    split: dict, cfg: dict[str, Any], exp_cfg: dict[str, Any]
 ) -> None:
-    y = split.y_train.copy()
+    y = split["y_train"].copy()
     y[:] = 0
     y.iloc[:2] = 1
-    with pytest.raises(DataValidationError, match="fewer than 5 CV folds"):
-        _script.run_audit(split.X_train, y, cfg, exp_cfg, 5)
+    with pytest.raises(ValueError, match="fewer than 5 CV folds"):
+        _script.run_audit(split["X_train"], y, cfg, exp_cfg, 5)
 
 
 def test_main_writes_valid_audit(tmp_path: Any, capsys: pytest.CaptureFixture[str]) -> None:

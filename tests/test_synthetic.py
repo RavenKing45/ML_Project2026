@@ -7,10 +7,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from fraudstudy.config import get_dataset_config
-from fraudstudy.errors import DataValidationError
+from fraudstudy.config import PROJECT_ROOT, get_dataset_config, resolve
 from fraudstudy.io import sha256_file
-from fraudstudy.paths import PROJECT_ROOT, resolve
 from fraudstudy.synthetic import (
     COLUMNS,
     DUPLICATE_FRAUDS,
@@ -128,7 +126,7 @@ def test_enough_frauds_for_cv_and_smote(df: pd.DataFrame) -> None:
     "kwargs", [{"fraud_rate": 0.0}, {"fraud_rate": 1.0}, {"n_rows": 50, "fraud_rate": 0.01}]
 )
 def test_invalid_arguments_raise(kwargs: dict[str, float]) -> None:
-    with pytest.raises(DataValidationError):
+    with pytest.raises(ValueError):
         make_synthetic(**kwargs)
 
 
