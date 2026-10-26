@@ -16,9 +16,8 @@ dependencies = [
     "lightgbm",
     "scipy",
     "matplotlib",
-    "pyyaml",
+    "statsmodels",
     "joblib",
-    "pydantic>=2",
 ]
 
 [tool.setuptools.packages.find]
@@ -28,7 +27,7 @@ where = ["src"]
 line-length = 100
 target-version = "py311"
 # model_build/ is a separate pre-existing package (its own pyproject.toml); lint it separately.
-extend-exclude = [".venv", "frontend", "notebooks", "model_build"]
+extend-exclude = [".venv", "notebooks", "model_build"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
@@ -36,4 +35,4 @@ select = ["E", "F", "W", "I", "B", "UP"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
-pythonpath = ["."]   # the repo root, so tests can import the backend package
+pythonpath = ["model_build/src"]   # so tests can import the from-scratch SMOTE

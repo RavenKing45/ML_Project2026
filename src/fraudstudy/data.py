@@ -1,150 +1,89 @@
-"""Load, check, deduplicate and split the credit-card dataset.
+"""Load the credit-card dataset, check its columns, remove duplicate rows and split it 70/30.
 
-Every script that touches the data calls load_dataset(), then deduplicate(), then
-split_dataset(). Reads the real CSV (data/raw/) or the synthetic sample (data/sample/) named in
-configs/dataset.yaml; writes nothing. No scaling or resampling happens here.
+experiments.py and evaluation.py call load_data(), remove_duplicates() and split_data(), in
+that order. Reads data/raw/creditcard.csv (the real data) or data/sample/creditcard_synthetic.csv
+(a small fake copy for tests and quick runs); writes nothing.
+
+Run it on its own to see the numbers: python -m fraudstudy.data [--source sample]
 """
 
-import numpy as np
+import argparse
+from pathlib import Path
+
 import pandas as pd
 from sklearn.model_selection import train_test_split
 
-from fraudstudy.config import get_dataset_config, resolve
-from fraudstudy.io import sha256_file
+# ---- SETTINGS ------------------------------------------------------------------------------------
+SEED = 42  # the one seed for every split, sampler and model in the project
+TEST_SIZE = 0.30  # 30% of the rows go to the locked test set
+PROJECT_ROOT = Path(__file__).resolve().parents[2]  # this file is src/fraudstudy/data.py
+RAW_PATH = PROJECT_ROOT / "data" / "raw" / "creditcard.csv"
+SAMPLE_PATH = PROJECT_ROOT / "data" / "sample" / "creditcard_synthetic.csv"
+# --------------------------------------------------------------------------------------------------
 
-KAGGLE_URL = "https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud"
+EXPECTED_COLUMNS = ["Time", *[f"V{i}" for i in range(1, 29)], "Amount", "Class"]  # 31 columns
 
 
-def load_dataset(source: str = "raw", verify_hash: bool = True,
-                 cfg: dict | None = None) -> pd.DataFrame:
-    """Read the real ("raw") or synthetic ("sample") CSV and check it with check_dataset().
-
-    The real file's SHA-256 is compared with configs/dataset.yaml, so a corrupted or different
-    download is caught before any result is computed from it.
-    """
-    cfg = cfg or get_dataset_config()
-    path_text = cfg["raw_path"] if source == "raw" else cfg["sample_path"]
-    path = resolve(path_text)
-
-    if source == "sample" and not path.is_file():
-        raise FileNotFoundError(
-            f"Synthetic sample not found at {path_text}. "
-            "Run: python scripts/generate_synthetic_data.py"
-        )
-    if path.is_dir():
-        # Unzipping the Kaggle download often creates creditcard.csv/creditcard.csv.
-        raise FileNotFoundError(
-            f"{path_text} is a folder, not a file. Move the CSV inside it up one level so that "
-            f"{path_text} is the file itself."
-        )
+def load_data(source: str = "raw") -> pd.DataFrame:
+    """Read the real ("raw") or the fake ("sample") CSV and check that it has the 31 columns."""
+    path = RAW_PATH if source == "raw" else SAMPLE_PATH
     if not path.is_file():
         raise FileNotFoundError(
-            f"Raw dataset not found at {path_text}. Download creditcard.csv from {KAGGLE_URL}, "
-            f"unzip it and put it at {path_text}, or use --source sample for the synthetic data."
+            f"{path} not found. Download creditcard.csv from "
+            "https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud, unzip it and put it in "
+            "data/raw/, or use --source sample for the small fake copy."
         )
-    if source == "raw" and verify_hash:
-        actual = sha256_file(path)
-        if actual != str(cfg["sha256"]).lower():
-            raise ValueError(
-                f"SHA-256 mismatch for {path_text}: expected {cfg['sha256']}, got {actual}. The "
-                f"file is corrupted or a different version; download it again from {KAGGLE_URL}."
-            )
-
     df = pd.read_csv(path)
-    check_dataset(df, cfg)
+    missing = [column for column in EXPECTED_COLUMNS if column not in df.columns]
+    if missing:
+        raise ValueError(f"{path} is missing the columns {missing}; is it the Kaggle file?")
     return df
 
 
-def check_dataset(df: pd.DataFrame, cfg: dict) -> None:
-    """Raise one ValueError listing every problem: missing or non-numeric columns, infinite
-    values, a target that is not 0/1, or a negative Amount. Missing feature values are allowed
-    (the pipeline imputes them)."""
-    target, amount = cfg["target"], cfg["amount_column"]
-    required = [cfg["time_column"], *cfg["pca_features"], amount, target]
-    problems = []
+def remove_duplicates(df: pd.DataFrame) -> tuple[pd.DataFrame, int, int]:
+    """Drop exact duplicate rows, keeping the first copy; return (df, rows removed, frauds removed).
 
-    missing = [col for col in required if col not in df.columns]
-    if missing:
-        problems.append(f"missing required columns: {', '.join(missing)}")
-    present = [col for col in required if col in df.columns]
-    # A bool column counts as numeric in pandas, but True/False is not a valid feature value.
-    text = [col for col in present
-            if not pd.api.types.is_numeric_dtype(df[col]) or pd.api.types.is_bool_dtype(df[col])]
-    if text:
-        problems.append(f"non-numeric columns (expected numbers): {', '.join(text)}")
-    numeric = [col for col in present if col not in text]
-
-    infinite = {col: int(np.isinf(df[col]).sum()) for col in numeric}
-    infinite = {col: count for col, count in infinite.items() if count}
-    if infinite:
-        problems.append("infinite values in: "
-                        + ", ".join(f"{col} ({count} rows)" for col, count in infinite.items()))
-    if target in numeric:
-        bad = ~df[target].isin([0, 1])  # a missing label is not 0 or 1 either
-        if bad.any():
-            seen = ", ".join(sorted(map(str, df.loc[bad, target].unique())))
-            problems.append(f"target '{target}' must be 0 or 1; {int(bad.sum())} rows have {seen}")
-    if amount in numeric and (df[amount] < 0).any():
-        problems.append(f"'{amount}' must be >= 0; {int((df[amount] < 0).sum())} rows are negative")
-
-    if problems:
-        raise ValueError("Dataset failed validation:\n- " + "\n- ".join(problems) + "\nFix "
-                         "the CSV (or the column names in configs/dataset.yaml) and reload.")
-
-
-def deduplicate(df: pd.DataFrame, target: str | None = None) -> tuple[pd.DataFrame, dict]:
-    """Remove exact duplicate rows, keeping the first copy and its original index label.
-
-    Returns the new frame and a dict with rows_before, rows_after, rows_removed, frauds_removed.
+    A duplicate could land in both train and test, and the model would then be tested on a row
+    it was trained on.
     """
-    target = target or get_dataset_config()["target"]
     is_copy = df.duplicated(keep="first")
-    report = {
-        "rows_before": len(df),
-        "rows_after": int((~is_copy).sum()),
-        "rows_removed": int(is_copy.sum()),
-        "frauds_removed": int((df.loc[is_copy, target] == 1).sum()),
-    }
-    return df.loc[~is_copy].copy(), report
+    frauds_removed = int((df.loc[is_copy, "Class"] == 1).sum())
+    return df[~is_copy].copy(), int(is_copy.sum()), frauds_removed
 
 
-def feature_columns(cfg: dict) -> list[str]:
-    """The model input columns: V1..V28 and Amount. Raw Time is left out (docs/decisions.md)."""
-    return [*cfg["pca_features"], cfg["amount_column"]]
+def split_data(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    """Stratified 70/30 split with SEED: (X_train, X_test, y_train, y_test).
 
-
-def class_summary(y: pd.Series) -> dict:
-    """Rows, frauds and fraud rate of one label column."""
-    rows, frauds = len(y), int((y == 1).sum())
-    return {"rows": rows, "frauds": frauds, "fraud_rate": frauds / rows if rows else 0.0}
-
-
-def split_dataset(df: pd.DataFrame, cfg: dict, exp_cfg: dict, strategy: str = "stratified") -> dict:
-    """Split `df` into train and test parts (test_size and seed from experiment.yaml).
-
-    "stratified" keeps the fraud rate the same in both parts. "temporal" sorts by Time and puts
-    the earliest 70% in train, so every test transaction happens after every training one.
-    Returns a dict with X_train, X_test, y_train, y_test, strategy and summary (class_summary
-    of all, train and test). Index labels are those of `df`, so rows stay traceable.
+    Stratified means both parts keep the same fraud rate. The row index is kept, so every row
+    can be traced back to the original file.
     """
-    if strategy not in ("stratified", "temporal"):
-        raise ValueError(f"strategy must be 'stratified' or 'temporal'; got {strategy!r}.")
-    target, columns, test_size = cfg["target"], feature_columns(cfg), float(exp_cfg["test_size"])
+    # Raw Time is dropped: it counts seconds from the first transaction of a two-day window, so it
+    # says when the data was collected, not something that carries over to new payments.
+    X = df.drop(columns=["Time", "Class"])
+    y = df["Class"]
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=TEST_SIZE, stratify=y, random_state=SEED
+    )
+    return X_train, X_test, y_train, y_test
 
-    if strategy == "stratified":
-        X_train, X_test, y_train, y_test = train_test_split(
-            df[columns], df[target], test_size=test_size, stratify=df[target],
-            random_state=exp_cfg["seed"],
-        )
-    else:
-        # kind="stable" keeps rows with the same Time in file order, so the split is repeatable.
-        ordered = df.sort_values(cfg["time_column"], kind="stable")
-        train_rows = int(round(len(ordered) * (1.0 - test_size)))
-        train, test = ordered.iloc[:train_rows], ordered.iloc[train_rows:]
-        X_train, X_test = train[columns].copy(), test[columns].copy()
-        y_train, y_test = train[target].copy(), test[target].copy()
 
-    summary = {"all": class_summary(df[target]), "train": class_summary(y_train),
-               "test": class_summary(y_test)}
-    return {"X_train": X_train, "X_test": X_test, "y_train": y_train, "y_test": y_test,
-            "strategy": strategy, "summary": summary}
+def main() -> None:
+    """Print rows, frauds, fraud rate, duplicates removed and the train/test sizes."""
+    parser = argparse.ArgumentParser(description="Summarise the dataset and the 70/30 split.")
+    parser.add_argument("--source", choices=["raw", "sample"], default="raw")
+    args = parser.parse_args()
+
+    df = load_data(args.source)
+    frauds = int(df["Class"].sum())
+    print(f"rows:        {len(df):,}")
+    print(f"frauds:      {frauds:,}")
+    print(f"fraud rate:  {frauds / len(df):.4%}")
+    df, removed, frauds_removed = remove_duplicates(df)
+    print(f"duplicates:  {removed:,} rows removed ({frauds_removed} of them frauds)")
+    X_train, X_test, y_train, y_test = split_data(df)
+    print(f"train:       {len(y_train):,} rows, {int(y_train.sum())} frauds")
+    print(f"test:        {len(y_test):,} rows, {int(y_test.sum())} frauds")
+
+
+if __name__ == "__main__":
+    main()

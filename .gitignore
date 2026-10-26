@@ -40,9 +40,6 @@ yarn-error.log*
 
 # Large artifacts
 artifacts/models/*.joblib
-# Except the deployed models (scripts/export_artifacts.py): the backend image is built from them.
-# Only this folder; cells/ and sample/ stay ignored. Keep each file under the 10 MB commit limit.
-!artifacts/models/deploy/*.joblib
 
 # OS / editor
 .DS_Store
@@ -50,6 +47,7 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Golden copy and sample-run output (scripts/golden.py, scripts/run_all_sample.py)
+# Golden copies of an earlier refactor check, and the output of runs on the fake sample
 .golden/
+.golden_before/
 artifacts/sample/
