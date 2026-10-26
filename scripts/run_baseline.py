@@ -3,6 +3,7 @@
 Usage::
 
     python scripts/run_baseline.py --source raw|sample [--quick] [--no-verify-hash]
+                                   [--results-dir DIR]
 
 Steps: load -> deduplicate -> stratified train/test split -> StratifiedKFold(cv_folds,
 shuffle=True, random_state=seed) ``cross_validate`` on the training part with scoring
@@ -10,12 +11,14 @@ shuffle=True, random_state=seed) ``cross_validate`` on the training part with sc
 
 ``--quick`` keeps a stratified ``quick.train_fraction`` of the training rows and uses
 ``quick.cv_folds`` folds (configs/experiment.yaml). Only scores are printed, never feature
-values.
+values. With ``--results-dir`` the per-fold scores are also written to
+``<DIR>/baseline_cv.json`` (used by scripts/run_all_sample.py and the golden check).
 """
 
 import argparse
 import sys
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -25,6 +28,7 @@ from sklearn.model_selection import StratifiedKFold, cross_validate, train_test_
 from fraudstudy.config import get_dataset_config, get_experiment_config, get_models_config
 from fraudstudy.data import deduplicate, load_dataset, split_dataset
 from fraudstudy.errors import DataValidationError, FraudStudyError
+from fraudstudy.io import save_json
 from fraudstudy.pipeline import build_pipeline
 
 MODEL = "logreg"
@@ -118,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source", choices=("raw", "sample"), required=True)
     parser.add_argument("--quick", action="store_true")
     parser.add_argument("--no-verify-hash", action="store_true")
+    parser.add_argument("--results-dir", type=Path, default=None)
     args = parser.parse_args(argv)
 
     cfg, exp_cfg, models_cfg = get_dataset_config(), get_experiment_config(), get_models_config()
@@ -153,6 +158,20 @@ def main(argv: list[str] | None = None) -> int:
             f"{label:<8} {values.mean():.4f} +- {values.std():.4f}   folds: "
             + " ".join(f"{v:.4f}" for v in values)
         )
+    if args.results_dir is not None:
+        result = {
+            "source": args.source,
+            "quick": args.quick,
+            "model": MODEL,
+            "technique": TECHNIQUE,
+            "model_params": model_params,
+            "cv_folds": n_folds,
+            "seed": seed,
+            "train_rows": len(y),
+            "train_frauds": int((y == 1).sum()),
+            "fold_scores": {label: values.tolist() for label, values in scores.items()},
+        }
+        print(f"\nwrote      {save_json(result, args.results_dir / 'baseline_cv.json')}")
     print(f"\nelapsed    {elapsed:.1f} s")
     return 0
 

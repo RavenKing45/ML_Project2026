@@ -49,3 +49,7 @@ artifacts/models/*.joblib
 Thumbs.db
 .vscode/
 .idea/
+
+# Golden copy and sample-run output (scripts/golden.py, scripts/run_all_sample.py)
+.golden/
+artifacts/sample/
