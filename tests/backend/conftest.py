@@ -11,11 +11,10 @@ from real_models import RealArtifacts, build_real_artifacts, real_settings
 from backend.app.main import create_app
 from backend.app.ratelimit import limiter
 from backend.app.settings import Settings
-from fraudstudy.experiment import Configs
 
 
 @pytest.fixture(scope="session")
-def real_artifacts(tmp_path_factory: pytest.TempPathFactory, test_cfgs: Configs) -> RealArtifacts:
+def real_artifacts(tmp_path_factory: pytest.TempPathFactory, test_cfgs: dict) -> RealArtifacts:
     """The small real models and their files, built once per session."""
     return build_real_artifacts(tmp_path_factory.mktemp("real_artifacts"), test_cfgs)
 

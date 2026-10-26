@@ -46,7 +46,7 @@ from backend.app.services import artifacts as art
 from backend.app.settings import DEV_ORIGINS, Settings, get_settings
 from fraudstudy import contracts as c
 from fraudstudy.config import PROJECT_ROOT
-from fraudstudy.experiment.runner import library_versions
+from fraudstudy.experiment import library_versions
 from fraudstudy.io import load_json, save_json, sha256_file
 
 EXAMPLES = PROJECT_ROOT / "docs" / "contracts" / "examples"

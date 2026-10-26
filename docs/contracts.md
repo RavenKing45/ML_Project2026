@@ -224,7 +224,7 @@ Optional fields *(1.4)*: `model_label`, `technique_label` (display names, as `MO
 applied when a request gives none, reported as `tuned_on_validation_F1` / `_F2`);
 `calibrator_file` (relative to `artifacts/models/`) and `calibrator_sha256`, set together and only
 when `has_calibrator`. The calibrator is an isotonic regression fitted on the cell's out-of-fold
-TRAINING scores; apply it with `fraudstudy.evaluation.apply_calibrator` to get
+TRAINING scores; apply it with `fraudstudy.metrics.apply_calibrator` to get
 `calibrated_probability`.
 
 Only the deployed subset of the 18 pipelines is listed (Part 9: not all 18 fit on a small server):
@@ -309,7 +309,7 @@ separated, header row), and optional query parameters `model_id` and `threshold`
 `/predict`). The body is streamed and kept in memory, never written to disk; reading stops once the
 file passes `MAX_UPLOAD_MB`. Columns: the model's `features` (`V1..V28, Amount`) are required;
 `Time` (unless the model uses it) and unknown columns are ignored (unknown ones are named in
-`warnings`); an optional `Class` (0/1) adds `metrics` (`fraudstudy.evaluation.compute_metrics` at
+`warnings`); an optional `Class` (0/1) adds `metrics` (`fraudstudy.metrics.compute_metrics` at
 the threshold used; null, with a warning, if the scored rows do not hold both classes). An EMPTY
 cell is a missing value, filled by the pipeline's median imputer and counted in `warnings`, except
 an empty `Amount`: that row goes to `errors` and is not scored (its amount could not be shown or

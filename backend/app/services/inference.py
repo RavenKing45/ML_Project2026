@@ -33,8 +33,8 @@ from fraudstudy.contracts import (
     ThresholdSource,
     Transaction,
 )
-from fraudstudy.evaluation import apply_calibrator
 from fraudstudy.explain import DEFAULT_TOP_K, FeatureReference, explain
+from fraudstudy.metrics import apply_calibrator
 
 logger = logging.getLogger(f"{LOGGER_NAME}.predict")
 
@@ -184,7 +184,7 @@ def score_rows(model: LoadedModel, X: pd.DataFrame) -> tuple[np.ndarray, np.ndar
 
     Returns:
         ``(risk scores, calibrated probabilities or None)``: ``predict_proba[:, 1]`` clipped to
-        [0, 1], and :func:`fraudstudy.evaluation.apply_calibrator` of them when the model has a
+        [0, 1], and :func:`fraudstudy.metrics.apply_calibrator` of them when the model has a
         calibrator.
     """
     scores = np.clip(np.asarray(model.pipeline.predict_proba(X), dtype=float)[:, 1], 0.0, 1.0)

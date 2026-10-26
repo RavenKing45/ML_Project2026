@@ -31,9 +31,7 @@ from fraudstudy.contracts import (
     PresetsFile,
 )
 from fraudstudy.data import deduplicate, load_dataset, split_dataset
-from fraudstudy.evaluation import best_threshold, fit_isotonic
-from fraudstudy.experiment import Configs
-from fraudstudy.experiment.runner import library_versions, training_sha256
+from fraudstudy.experiment import library_versions, training_sha256
 from fraudstudy.explain import FeatureReference, build_feature_reference
 from fraudstudy.export import (
     DEMO_BATCH_FILE,
@@ -45,6 +43,7 @@ from fraudstudy.export import (
     pick_presets,
 )
 from fraudstudy.io import save_json, sha256_file
+from fraudstudy.metrics import best_threshold, fit_calibrator
 from fraudstudy.pipeline import build_pipeline
 
 EXAMPLES = PROJECT_ROOT / "docs" / "contracts" / "examples"
@@ -90,9 +89,9 @@ class RealArtifacts:
     test_rows: pd.DataFrame
 
 
-def _fit_cells(cfgs: Configs, X: pd.DataFrame, y: pd.Series) -> dict[str, Any]:
+def _fit_cells(cfgs: dict, X: pd.DataFrame, y: pd.Series) -> dict[str, Any]:
     """The seven deployed cells, fitted on ``X, y`` with small fixed hyper-parameters."""
-    cfg, exp = cfgs.dataset, cfgs.experiment
+    cfg, exp = cfgs["dataset"], cfgs["experiment"]
     lightgbm = {**TINY_LIGHTGBM, "n_jobs": exp["parallel"]["model_n_jobs"]}
     cells = {f"lightgbm__{t}": ("lightgbm", t, lightgbm) for t in TECHNIQUE_PARAMS}
     cells[LOGREG_ID] = ("logreg", LOGREG_ID.partition("__")[2], LOGREG_PARAMS)
@@ -113,7 +112,7 @@ def _write_cell(
     scores = pipeline.predict_proba(X)[:, 1]
     calibrator = calibrator_file = calibrator_sha = None
     if cell_id != UNCALIBRATED_ID:
-        calibrator = fit_isotonic(scores, y)
+        calibrator = fit_calibrator(scores, y)
         calibrator_path = deploy / f"{cell_id}.calibrator.joblib"
         joblib.dump(calibrator, calibrator_path)
         calibrator_file = f"{deploy.name}/{calibrator_path.name}"
@@ -138,7 +137,7 @@ def _write_cell(
     return entry, calibrator
 
 
-def build_real_artifacts(root: Path, cfgs: Configs) -> RealArtifacts:
+def build_real_artifacts(root: Path, cfgs: dict) -> RealArtifacts:
     """Fit the deployed cells on the sample and write a real-mode artifact tree under ``root``.
 
     Args:
@@ -148,7 +147,7 @@ def build_real_artifacts(root: Path, cfgs: Configs) -> RealArtifacts:
     Returns:
         The :class:`RealArtifacts`.
     """
-    cfg, exp = cfgs.dataset, cfgs.experiment
+    cfg, exp = cfgs["dataset"], cfgs["experiment"]
     artifacts, models = root / "artifacts", root / "models"
     deploy = models / "deploy"
     for folder in (artifacts / "results", artifacts / "demo", deploy):

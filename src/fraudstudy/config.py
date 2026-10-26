@@ -61,6 +61,12 @@ def get_models_config() -> dict:
     return load_config("models")
 
 
+def load_configs() -> dict:
+    """All three configs in one dict: {"dataset": ..., "experiment": ..., "models": ...}."""
+    return {"dataset": get_dataset_config(), "experiment": get_experiment_config(),
+            "models": get_models_config()}
+
+
 def set_seed(seed: int) -> None:
     """Seed Python's random module and NumPy's global generator.
 

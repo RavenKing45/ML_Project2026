@@ -20,59 +20,38 @@ import sys
 from pathlib import Path
 
 from fraudstudy.config import resolve
-from fraudstudy.contracts import ComparisonTable, CurvesFile, ResamplingAudit, StatsResult
-from fraudstudy.evaluation.figures import figures_dir_for, make_all_figures
-from fraudstudy.experiment.results import source_fold_scores
-from fraudstudy.experiment.test_eval import COMPARISON_FILE, CURVES_FILE, output_dir_for
+from fraudstudy.experiment import source_fold_scores
+from fraudstudy.figures import figures_dir_for, make_all_figures
+from fraudstudy.final_test import COMPARISON_FILE, CURVES_FILE, output_dir_for
 from fraudstudy.io import load_json
 
-RESULTS_DIR = "artifacts/results"
-AUDIT_FILE = "resampling_audit.json"
-STATS_FILE = "stats.json"
 
-
-def _load(path: Path, what: str, hint: str) -> object:
-    """Load a JSON artifact or raise a clear error naming the script that writes it."""
+def load_result(path: Path, script: str) -> dict:
+    """Read a result file, or say which script writes it."""
     if not path.is_file():
-        raise ValueError(f"{what} not found at {path}; run {hint} first.")
+        raise FileNotFoundError(f"{path.name} not found at {path}; run {script} first.")
     return load_json(path)
 
 
-def run(
-    source: str,
-    results_dir: Path,
-    output_dir: Path | None = None,
-    audit_path: Path | None = None,
-    figures_dir: Path | None = None,
-) -> dict[str, Path]:
-    """Load the artifacts and write every figure.
+def run(source: str, results_dir: Path, output_dir: Path | None = None,
+        audit_path: Path | None = None, figures_dir: Path | None = None) -> dict:
+    """Load the result files and write every figure; returns {figure name: path}.
 
-    Args:
-        source: ``"raw"`` or ``"sample"``.
-        results_dir: Folder with ``fold_scores.csv`` (and ``resampling_audit.json``).
-        output_dir: Evaluation folder with comparison / curves / stats
-            (default ``output_dir_for(source, results_dir)``).
-        audit_path: Resampling audit (default ``results_dir/resampling_audit.json``).
-        figures_dir: Output folder (default ``artifacts/figures`` or ``artifacts/figures/sample``).
-
-    Returns:
-        Figure name -> path written.
+    comparison / curves / stats come from the evaluation folder (results_dir for raw,
+    results_dir/sample_test_eval for the sample); the audit defaults to
+    results_dir/resampling_audit.json and is skipped with a warning if missing.
     """
     results_dir = Path(results_dir)
     output_dir = Path(output_dir) if output_dir else output_dir_for(source, results_dir)
     figures_dir = Path(figures_dir) if figures_dir else figures_dir_for(source)
     evaluate = f"scripts/evaluate_test.py --source {source}"
-    comparison = ComparisonTable.model_validate(
-        _load(output_dir / COMPARISON_FILE, "comparison.json", evaluate)
-    )
-    curves = CurvesFile.model_validate(_load(output_dir / CURVES_FILE, "curves.json", evaluate))
-    stats = StatsResult.model_validate(
-        _load(output_dir / STATS_FILE, "stats.json", f"scripts/run_stats.py --source {source}")
-    )
-    audit_path = Path(audit_path) if audit_path else results_dir / AUDIT_FILE
+    comparison = load_result(output_dir / COMPARISON_FILE, evaluate)
+    curves = load_result(output_dir / CURVES_FILE, evaluate)
+    stats = load_result(output_dir / "stats.json", f"scripts/run_stats.py --source {source}")
+    audit_path = Path(audit_path) if audit_path else results_dir / "resampling_audit.json"
     audit = None
     if audit_path.is_file():
-        audit = ResamplingAudit.model_validate(load_json(audit_path))
+        audit = load_json(audit_path)
     else:
         print(f"warning: {audit_path} not found; skipping resampling_counts.png", file=sys.stderr)
     return make_all_figures(
@@ -81,17 +60,10 @@ def run(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Parse arguments and draw the figures.
-
-    Args:
-        argv: Command-line arguments (defaults to ``sys.argv[1:]``).
-
-    Returns:
-        0 on success, 1 on a data or config error.
-    """
+    """Draw the figures; 1 on a data or config error."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--source", choices=("raw", "sample"), required=True)
-    parser.add_argument("--results-dir", type=Path, default=resolve(RESULTS_DIR))
+    parser.add_argument("--results-dir", type=Path, default=resolve("artifacts/results"))
     parser.add_argument("--output-dir", type=Path)
     parser.add_argument("--audit", type=Path)
     parser.add_argument("--figures-dir", type=Path)

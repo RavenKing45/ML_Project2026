@@ -50,7 +50,7 @@ from fraudstudy.contracts import (
     StatsResult,
     TopLevel,
 )
-from fraudstudy.experiment.runner import library_versions
+from fraudstudy.experiment import library_versions
 from fraudstudy.explain import FeatureReference
 from fraudstudy.export import FEATURE_REFERENCE_FILE, PICKLE_LIBRARIES
 from fraudstudy.io import git_hash, sha256_file

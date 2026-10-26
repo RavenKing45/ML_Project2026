@@ -34,7 +34,7 @@ import joblib
 import numpy as np
 import pandas as pd
 
-from fraudstudy.config import resolve
+from fraudstudy.config import load_configs, resolve
 from fraudstudy.contracts import (
     MODEL_LABELS,
     TECHNIQUE_LABELS,
@@ -46,16 +46,21 @@ from fraudstudy.contracts import (
     Transaction,
 )
 from fraudstudy.data import deduplicate, load_dataset, split_dataset
-from fraudstudy.evaluation import fit_isotonic
-from fraudstudy.experiment.results import RUN_META_FILE, CellRecord, cell_paths, load_cell_record
-from fraudstudy.experiment.runner import (
-    Configs,
-    get_protocol,
+from fraudstudy.experiment import (
+    RUN_META_FILE,
+    cell_paths,
     library_versions,
+    protocol,
     stratified_subsample,
     training_sha256,
 )
-from fraudstudy.experiment.test_eval import (
+from fraudstudy.explain import (
+    FeatureReference,
+    build_feature_reference,
+    check_range_percentiles,
+    feature_map,
+)
+from fraudstudy.final_test import (
     DATASET_SOURCE,
     DECISIONS_FILE,
     DETAILS_FILE,
@@ -65,13 +70,8 @@ from fraudstudy.experiment.test_eval import (
     open_test_set,
     output_dir_for,
 )
-from fraudstudy.explain import (
-    FeatureReference,
-    build_feature_reference,
-    check_range_percentiles,
-    feature_map,
-)
 from fraudstudy.io import git_hash, load_json, save_json, sha256_file
+from fraudstudy.metrics import fit_calibrator
 
 logger = logging.getLogger(__name__)
 
@@ -329,7 +329,7 @@ def deploy_settings(exp_cfg: dict[str, Any], default_cell: str | None = None) ->
 
 def load_cells(
     cells: list[str], results_dir: Path, models_dir: Path, source: str
-) -> dict[str, CellRecord]:
+) -> dict[str, dict]:
     """Load and cross-check the records of the deployed cells.
 
     Raises:
@@ -337,7 +337,7 @@ def load_cells(
         ValueError: If a cell ran on another source, or the cells disagree on seed,
             mode, training data or data file.
     """
-    records: dict[str, CellRecord] = {}
+    records: dict[str, dict] = {}
     missing: list[str] = []
     for name in cells:
         model, _, technique = name.partition("__")
@@ -345,29 +345,29 @@ def load_cells(
         if not all(p.is_file() for p in paths.values()):
             missing.append(name)
             continue
-        records[name] = load_cell_record(paths["record"])
+        records[name] = load_json(paths["record"])
     if missing:
         raise ValueError(
             f"Cells {', '.join(missing)} have no finished record, out-of-fold scores and pipeline "
             f"under {results_dir} / {models_dir}; run scripts/run_experiments.py for them (or "
             "copy them from the machine that did)."
         )
-    wrong = [n for n, r in records.items() if r.source != source]
+    wrong = [n for n, r in records.items() if r["source"] != source]
     if wrong:
         raise ValueError(f"Cells {', '.join(wrong)} were not run on source {source!r}.")
     for key in ("seed", "quick", "train_sha256", "data_sha256"):
-        values = {str(getattr(r, key)) for r in records.values()}
+        values = {str(r[key]) for r in records.values()}
         if len(values) > 1:
             raise ValueError(
                 f"Deployed cells disagree on {key} ({sorted(values)}); re-run the odd ones so "
                 "every deployed model comes from the same protocol and data."
             )
-    if next(iter(records.values())).data_sha256 is None:
+    if next(iter(records.values()))["data_sha256"] is None:
         raise ValueError("Cell records lack data_sha256; re-run them with the runner.")
     return records
 
 
-def check_library_versions(records: dict[str, CellRecord]) -> dict[str, str]:
+def check_library_versions(records: dict[str, dict]) -> dict[str, str]:
     """Raise unless this environment has the training versions of :data:`PICKLE_LIBRARIES`.
 
     Returns:
@@ -378,10 +378,10 @@ def check_library_versions(records: dict[str, CellRecord]) -> dict[str, str]:
     """
     current = library_versions()
     bad = [
-        f"{name}: {lib} {r.library_versions.get(lib)} at training, {current.get(lib)} here"
+        f"{name}: {lib} {r['library_versions'].get(lib)} at training, {current.get(lib)} here"
         for name, r in records.items()
         for lib in PICKLE_LIBRARIES
-        if r.library_versions.get(lib) != current.get(lib)
+        if r["library_versions"].get(lib) != current.get(lib)
     ]
     if bad:
         raise ValueError(
@@ -392,7 +392,7 @@ def check_library_versions(records: dict[str, CellRecord]) -> dict[str, str]:
 
 
 def check_test_evaluated(
-    records: dict[str, CellRecord], details_path: Path, models_dir: Path, required: bool
+    records: dict[str, dict], details_path: Path, models_dir: Path, required: bool
 ) -> None:
     """Check that every deployed pipeline is byte-identical to the one the test set scored.
 
@@ -419,27 +419,27 @@ def check_test_evaluated(
                 f"{name} was not evaluated on the test set ({details_path}); deploy only "
                 "evaluated cells, so the served model is the one whose metrics are reported."
             )
-        pipeline = cell_paths(r.model, r.technique, Path(), models_dir)["pipeline"]
+        pipeline = cell_paths(r["model"], r["technique"], Path(), models_dir)["pipeline"]
         if sha256_file(pipeline) != evaluated[name]:
             raise ValueError(
                 f"{pipeline} changed after the test evaluation; restore the evaluated file."
             )
 
 
-def load_export_data(source: str, quick: bool, cfgs: Configs, verify_hash: bool) -> ExportData:
+def load_export_data(source: str, quick: bool, cfgs: dict, verify_hash: bool) -> ExportData:
     """Rebuild the training run's split: load -> dedup -> stratified split -> quick subsample.
 
     The same steps as ``load_training_data`` / ``load_test_split``; the caller checks the
     training hash against the cell records.
     """
-    df = load_dataset(source, verify_hash=verify_hash, cfg=cfgs.dataset)
-    deduped, _ = deduplicate(df, target=cfgs.dataset["target"])
-    split = split_dataset(deduped, cfgs.dataset, cfgs.experiment, strategy="stratified")
+    df = load_dataset(source, verify_hash=verify_hash, cfg=cfgs["dataset"])
+    deduped, _ = deduplicate(df, target=cfgs["dataset"]["target"])
+    split = split_dataset(deduped, cfgs["dataset"], cfgs["experiment"], strategy="stratified")
     X_train, y_train = split["X_train"], split["y_train"]
     if quick and source == "raw":
-        fraction = get_protocol(cfgs.experiment, quick=True).train_fraction
+        fraction = protocol(cfgs["experiment"], quick=True)["train_fraction"]
         X_train, y_train = stratified_subsample(
-            X_train, y_train, fraction, int(cfgs.experiment["seed"])
+            X_train, y_train, fraction, int(cfgs["experiment"]["seed"])
         )
     return ExportData(
         X_train=X_train,
@@ -613,7 +613,7 @@ def export_artifacts(
     rerun_reason: str | None = None,
     guard_path: Path | None = None,
     decisions_path: Path | None = None,
-    cfgs: Configs | None = None,
+    cfgs: dict | None = None,
     verify_hash: bool = True,
     log: Callable[[str], None] = print,
 ) -> ExportReport:
@@ -633,7 +633,7 @@ def export_artifacts(
         rerun_reason: Required on raw when an export already read the test set.
         guard_path: Default ``results_dir/TEST_SET_OPENED.json`` on raw; none on the sample.
         decisions_path: Where re-run reasons are appended (default ``docs/decisions.md``).
-        cfgs: Configs (loaded if omitted).
+        cfgs: The three configs from config.load_configs() (loaded if omitted).
         verify_hash: Check the raw file's SHA-256.
         log: Progress printer (never prints feature values).
 
@@ -646,8 +646,8 @@ def export_artifacts(
         ValueError: If files are missing, inconsistent or changed since evaluation.
         ValueError: If the guard refuses or the training set differs from the cells'.
     """
-    cfgs = cfgs if cfgs is not None else Configs.load()
-    settings = deploy_settings(cfgs.experiment, default_cell)
+    cfgs = cfgs if cfgs is not None else load_configs()
+    settings = deploy_settings(cfgs["experiment"], default_cell)
     results_dir, models_dir = Path(results_dir), Path(models_dir)
     out = out if out is not None else export_paths(source)
     if guard_path is None and source == "raw":
@@ -667,16 +667,18 @@ def export_artifacts(
         check_guard(guard_path, rerun_reason, EXPORT_ACTION)
 
     first = next(iter(records.values()))
-    data = load_export_data(source, first.quick, cfgs, verify_hash)
+    data = load_export_data(source, first["quick"], cfgs, verify_hash)
     run_meta_path = results_dir / RUN_META_FILE
     run_meta = load_json(run_meta_path) if run_meta_path.is_file() else None
     check_training_hash(data.train_sha256, list(records.values()), run_meta)
     if guard_path is not None:
-        keys = [(r.model, r.technique) for r in records.values()]
+        keys = [(r["model"], r["technique"]) for r in records.values()]
         open_test_set(guard_path, keys, rerun_reason, decisions_path, EXPORT_ACTION)
 
     pipelines = {
-        name: joblib.load(cell_paths(r.model, r.technique, results_dir, models_dir)["pipeline"])
+        name: joblib.load(
+            cell_paths(r["model"], r["technique"], results_dir, models_dir)["pipeline"]
+        )
         for name, r in records.items()
     }
     default = pipelines[settings.default_cell]
@@ -685,7 +687,7 @@ def export_artifacts(
         data.X_train,
         data.y_train,
         source=source,
-        data_sha256=first.data_sha256,
+        data_sha256=first["data_sha256"],
         train_sha256=data.train_sha256,
         range_percentiles=settings.input_range_percentiles,
     )
@@ -701,40 +703,40 @@ def export_artifacts(
         sizes[model_path] = model_path.stat().st_size
         cal_file = cal_sha = None
         if settings.calibrate:
-            oof = np.load(cell_paths(r.model, r.technique, results_dir)["oof"])
+            oof = np.load(cell_paths(r["model"], r["technique"], results_dir)["oof"])
             if len(oof) != len(data.y_train):
                 raise ValueError(
                     f"{name}: {len(oof)} out-of-fold scores for {len(data.y_train)} training rows."
                 )
             cal_path = deploy_dir / f"{name}{CALIBRATOR_SUFFIX}"
-            joblib.dump(fit_isotonic(oof, data.y_train), cal_path, compress=JOBLIB_COMPRESS)
+            joblib.dump(fit_calibrator(oof, data.y_train), cal_path, compress=JOBLIB_COMPRESS)
             sizes[cal_path] = cal_path.stat().st_size
             cal_file, cal_sha = cal_path.relative_to(out.models).as_posix(), sha256_file(cal_path)
         inputs = pipelines[name].named_steps["preprocess"].feature_names_in_
         entries.append(
             ManifestEntry(
                 id=name,
-                model=r.model,
-                technique=r.technique,
-                model_label=MODEL_LABELS[r.model],
-                technique_label=TECHNIQUE_LABELS[r.technique],
+                model=r["model"],
+                technique=r["technique"],
+                model_label=MODEL_LABELS[r["model"]],
+                technique_label=TECHNIQUE_LABELS[r["technique"]],
                 file=model_path.relative_to(out.models).as_posix(),
                 sha256=model_sha,
-                threshold_f1=r.thresholds["f1"],
-                threshold_f2=r.thresholds["f2"],
+                threshold_f1=r["thresholds"]["f1"],
+                threshold_f2=r["thresholds"]["f2"],
                 default_threshold=settings.default_threshold,
                 has_calibrator=cal_file is not None,
                 calibrator_file=cal_file,
                 calibrator_sha256=cal_sha,
                 features=[str(c) for c in inputs],
-                data_sha256=str(r.data_sha256),
+                data_sha256=str(r["data_sha256"]),
                 library_versions=versions,
             )
         )
         log(f"deployed   {name:<26} {sizes[model_path] / BYTES_PER_MB:6.2f} MB")
 
     ref_path = save_json(reference.model_dump(mode="json"), out.models / FEATURE_REFERENCE_FILE)
-    threshold = records[settings.default_cell].thresholds[settings.default_threshold]
+    threshold = records[settings.default_cell]["thresholds"][settings.default_threshold]
     scores = default.predict_proba(data.X_test)[:, 1]
     presets, skipped = pick_presets(
         data.test_rows,
@@ -742,7 +744,7 @@ def export_artifacts(
         threshold,
         settings.presets,
         settings.default_cell,
-        cfgs.dataset,
+        cfgs["dataset"],
         settings.default_threshold,
         "Real" if source == "raw" else "Synthetic",
     )
@@ -751,10 +753,10 @@ def export_artifacts(
         logger.warning("No test row matches preset %s; it is left out.", preset_id)
     batch = demo_batch(
         data.test_rows,
-        cfgs.dataset["target"],
+        cfgs["dataset"]["target"],
         settings.demo_batch_rows,
         settings.demo_batch_frauds,
-        int(cfgs.experiment["seed"]),
+        int(cfgs["experiment"]["seed"]),
     )
     out.batch.parent.mkdir(parents=True, exist_ok=True)
     batch.to_csv(out.batch, index=False, lineterminator="\n")
@@ -762,12 +764,12 @@ def export_artifacts(
     manifest = Manifest(
         created_at=datetime.now(UTC).isoformat(timespec="seconds"),
         git_commit=git_hash(),
-        seed=first.seed,
-        quick_mode=first.quick,
+        seed=first["seed"],
+        quick_mode=first["quick"],
         dataset=DatasetInfo(
-            name=str(cfgs.dataset["name"]),
+            name=str(cfgs["dataset"]["name"]),
             source=DATASET_SOURCE[source],
-            sha256=str(first.data_sha256),
+            sha256=str(first["data_sha256"]),
             n_rows=data.n_rows,
         ),
         default_model_id=settings.default_cell,

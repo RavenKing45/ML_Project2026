@@ -21,7 +21,7 @@ import sys
 from pathlib import Path
 
 from fraudstudy.config import get_experiment_config, resolve
-from fraudstudy.experiment.test_eval import temporal_check
+from fraudstudy.final_test import temporal_check
 
 RESULTS_DIR = "artifacts/results"
 MODELS_DIR = "artifacts/models"
@@ -29,14 +29,7 @@ DEFAULT_MODEL = "lightgbm"
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Parse arguments, run the check and print one line per technique.
-
-    Args:
-        argv: Command-line arguments (defaults to ``sys.argv[1:]``).
-
-    Returns:
-        0 on success, 1 on an error or a guard refusal.
-    """
+    """Run the check and print one line per technique; 1 on an error or a guard refusal."""
     exp_cfg = get_experiment_config()
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--source", choices=("raw", "sample"), required=True)

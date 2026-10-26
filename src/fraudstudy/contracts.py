@@ -945,7 +945,7 @@ class ResultsResponse(TopLevel):
     written, plus ``temporal_check.json`` when present.
 
     ``temporal_check`` is a labelled SENSITIVITY ANALYSIS, not the main result; its inner shape
-    is internal to ``fraudstudy.experiment.test_eval.temporal_check`` (not a contract) and it is
+    is internal to ``fraudstudy.final_test.temporal_check`` (not a contract) and it is
     ``None`` when the check has not been run. ``is_example`` is true if any part is an example.
     """
 

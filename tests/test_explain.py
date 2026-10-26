@@ -14,7 +14,6 @@ from imblearn.under_sampling import RandomUnderSampler
 
 from fraudstudy.contracts import Explanation
 from fraudstudy.data import deduplicate, load_dataset, split_dataset
-from fraudstudy.experiment import Configs
 from fraudstudy.explain import (
     METHOD_LINEAR,
     METHOD_TREESHAP,
@@ -46,9 +45,9 @@ class Fitted:
 
 
 @pytest.fixture(scope="module")
-def fitted(test_cfgs: Configs) -> Fitted:
+def fitted(test_cfgs: dict) -> Fitted:
     """Logreg + SMOTE and LightGBM + SMOTE/RUS pipelines fitted on the sample's training split."""
-    cfg, exp = test_cfgs.dataset, test_cfgs.experiment
+    cfg, exp = test_cfgs["dataset"], test_cfgs["experiment"]
     df, _ = deduplicate(load_dataset("sample", cfg=cfg), target=cfg["target"])
     split = split_dataset(df, cfg, exp)
     X, y = split["X_train"], split["y_train"]
@@ -194,13 +193,13 @@ def test_reference_rejects_bad_quantiles(fitted: Fitted) -> None:
 # --- errors ---------------------------------------------------------------------------------------
 
 
-def test_random_forest_is_not_explained(fitted: Fitted, test_cfgs: Configs) -> None:
+def test_random_forest_is_not_explained(fitted: Fitted, test_cfgs: dict) -> None:
     rf = build_pipeline(
         "random_forest",
         "baseline",
         {"n_estimators": 5, "n_jobs": 1},
-        cfg=test_cfgs.dataset,
-        exp_cfg=test_cfgs.experiment,
+        cfg=test_cfgs["dataset"],
+        exp_cfg=test_cfgs["experiment"],
     ).fit(fitted.X_train, fitted.y_train)
     with pytest.raises(ValueError, match="shap"):
         explain(rf, fitted.X_test.iloc[[0]], fitted.reference)

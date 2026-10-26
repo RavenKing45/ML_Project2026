@@ -22,21 +22,14 @@ import sys
 from pathlib import Path
 
 from fraudstudy.config import resolve
-from fraudstudy.experiment.test_eval import evaluate_test
+from fraudstudy.final_test import evaluate_test
 
 RESULTS_DIR = "artifacts/results"
 MODELS_DIR = "artifacts/models"
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Parse arguments, evaluate and print the comparison table.
-
-    Args:
-        argv: Command-line arguments (defaults to ``sys.argv[1:]``).
-
-    Returns:
-        0 on success, 1 on an error or a guard refusal.
-    """
+    """Evaluate and print the comparison table; 1 on an error or a guard refusal."""
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--source", choices=("raw", "sample"), required=True)
     parser.add_argument("--cells", nargs="+", metavar="MODEL__TECHNIQUE")
@@ -72,18 +65,17 @@ def main(argv: list[str] | None = None) -> int:
         f"\n{'model':<14}{'technique':<14}{'CV PR-AUC':>10}{'test PR-AUC (95% CI)':>25}"
         f"{'ROC-AUC':>9}{'thr F1':>8}{'P@F1':>7}{'R@F1':>7}{'R@0.5':>7}"
     )
-    evaluated = set(report.evaluated)
-    for r in report.comparison.records:
-        if (r.model, r.technique) not in evaluated:
+    for r in report["comparison"]["records"]:
+        if (r["model"], r["technique"]) not in report["evaluated"]:
             continue
-        t = r.test_at_tuned
-        ci = f"{t.pr_auc:.4f} ({r.pr_auc_ci[0]:.3f}-{r.pr_auc_ci[1]:.3f})"
+        t = r["test_at_tuned"]
+        ci = f"{t['pr_auc']:.4f} ({r['pr_auc_ci'][0]:.3f}-{r['pr_auc_ci'][1]:.3f})"
         print(
-            f"{r.model:<14}{r.technique:<14}{r.cv_pr_auc_mean:>10.4f}{ci:>25}{t.roc_auc:>9.4f}"
-            f"{r.threshold_f1:>8.3f}{t.precision:>7.3f}{t.recall:>7.3f}"
-            f"{r.test_at_0_5.recall:>7.3f}"
+            f"{r['model']:<14}{r['technique']:<14}{r['cv_pr_auc_mean']:>10.4f}{ci:>25}"
+            f"{t['roc_auc']:>9.4f}{r['threshold_f1']:>8.3f}{t['precision']:>7.3f}"
+            f"{t['recall']:>7.3f}{r['test_at_0_5']['recall']:>7.3f}"
         )
-    for name, path in report.paths.items():
+    for name, path in report["paths"].items():
         print(f"wrote      {name}: {path}")
     return 0
 

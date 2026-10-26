@@ -7,7 +7,7 @@ Usage::
 
 Each cell: equal-budget ``RandomizedSearchCV`` scored by average precision, out-of-fold scores
 and F1 / F2 thresholds, repeated-CV fold scores (same folds for every cell), resampling audit
-(``fraudstudy.experiment.runner.run_cell``). Finished cells are skipped unless ``--force``.
+(``fraudstudy.experiment.run_cell``). Finished cells are skipped unless ``--force``.
 ``--quick`` uses the ``quick`` block of configs/experiment.yaml; its ``train_fraction`` applies
 to the raw source only. The test split is never used.
 
@@ -22,24 +22,17 @@ import logging
 import sys
 from pathlib import Path
 
-from fraudstudy.config import resolve
-from fraudstudy.experiment import Configs, run_experiments
+from fraudstudy.config import load_configs, resolve
+from fraudstudy.experiment import run_experiments
 
 RESULTS_DIR = "artifacts/results"
 MODELS_DIR = "artifacts/models"
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Parse arguments, run the requested cells and print a summary table.
-
-    Args:
-        argv: Command-line arguments (defaults to ``sys.argv[1:]``).
-
-    Returns:
-        Process exit code (0 on success, 1 on a data or config error).
-    """
-    cfgs = Configs.load()
-    exp_cfg = cfgs.experiment
+    """Run the requested cells and print a summary table; 1 on a data or config error."""
+    cfgs = load_configs()
+    exp_cfg = cfgs["experiment"]
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--source", choices=("raw", "sample"), required=True)
     parser.add_argument("--quick", action="store_true")
@@ -74,14 +67,13 @@ def main(argv: list[str] | None = None) -> int:
         f"\n{'model':<14}{'technique':<14}{'ratio':>8}{'CV PR-AUC':>18}{'ROC-AUC':>9}"
         f"{'thr F1':>8}{'thr F2':>8}{'tries':>6}{'fit s':>7}  status"
     )
-    for rec, status in out:
-        ratio = "-" if rec.chosen_ratio is None else f"{rec.chosen_ratio:g}"
+    for r, status in out:
+        ratio = "-" if r["chosen_ratio"] is None else f"{r['chosen_ratio']:g}"
         print(
-            f"{rec.model:<14}{rec.technique:<14}{ratio:>8}"
-            f"{rec.cv_pr_auc_mean:>11.4f} +- {rec.cv_pr_auc_std:.3f}{rec.cv_roc_auc_mean:>9.4f}"
-            f"{rec.thresholds.get('f1', float('nan')):>8.3f}"
-            f"{rec.thresholds.get('f2', float('nan')):>8.3f}"
-            f"{rec.n_candidates_evaluated:>6}{rec.fit_seconds:>7.1f}  {status}"
+            f"{r['model']:<14}{r['technique']:<14}{ratio:>8}"
+            f"{r['cv_pr_auc_mean']:>11.4f} +- {r['cv_pr_auc_std']:.3f}{r['cv_roc_auc_mean']:>9.4f}"
+            f"{r['thresholds']['f1']:>8.3f}{r['thresholds']['f2']:>8.3f}"
+            f"{r['n_candidates_evaluated']:>6}{r['fit_seconds']:>7.1f}  {status}"
         )
     print(f"\nwrote      {args.results_dir} (cells, fold_scores.csv, run_meta.json)")
     return 0

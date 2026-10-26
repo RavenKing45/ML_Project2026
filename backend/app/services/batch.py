@@ -17,7 +17,7 @@ them. The exception is an empty ``Amount``: that row is listed in ``errors`` and
 because its amount could not be shown or added to ``flagged_amount_total``.
 
 Scoring (:func:`score_batch`) is vectorised: one ``predict_proba`` call for every row. With
-``Class``, ``metrics`` are :func:`fraudstudy.evaluation.compute_metrics` at the threshold used.
+``Class``, ``metrics`` are :func:`fraudstudy.metrics.compute_metrics` at the threshold used.
 Row numbers are 0-based data rows (the header is not counted), and results keep input order.
 File contents and filenames are never logged.
 """
@@ -49,7 +49,7 @@ from fraudstudy.contracts import (
     Metrics,
     ModelRef,
 )
-from fraudstudy.evaluation import compute_metrics
+from fraudstudy.metrics import compute_metrics
 
 FILE_FIELD = "file"
 CSV_SUFFIX = ".csv"

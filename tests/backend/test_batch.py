@@ -21,7 +21,7 @@ from backend.app.ratelimit import BATCH_LIMIT, limiter
 from backend.app.services import batch as bt
 from backend.app.settings import Settings
 from fraudstudy.contracts import BatchResponse, ErrorResponse
-from fraudstudy.evaluation import apply_calibrator, compute_metrics
+from fraudstudy.metrics import apply_calibrator, compute_metrics
 
 pytestmark = pytest.mark.usefixtures("rate_limits_off")
 
@@ -98,7 +98,7 @@ def test_demo_batch_returns_200_with_metrics(
     assert result.n_flagged == flagged.sum()
     assert result.flagged_fraction == pytest.approx(flagged.mean())
     assert result.flagged_amount_total == pytest.approx(demo_rows["Amount"][flagged].sum())
-    assert result.metrics == compute_metrics(y, scores, threshold)
+    assert result.metrics.model_dump() == compute_metrics(y, scores, threshold)
     assert result.warnings == [
         "Metrics describe this file only (5.00% of its scored rows are fraud, 1.50% in the full "
         "dataset); precision depends on the fraud share."

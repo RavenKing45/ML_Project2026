@@ -34,10 +34,10 @@ from backend.app.services import artifacts as art
 from backend.app.services import inference as inf
 from backend.app.settings import Settings
 from fraudstudy.contracts import ErrorResponse, PredictResponse, Transaction
-from fraudstudy.evaluation import apply_calibrator
 from fraudstudy.explain import DEFAULT_TOP_K, FeatureReference
 from fraudstudy.export import FEATURE_REFERENCE_FILE
 from fraudstudy.io import load_json, save_json
+from fraudstudy.metrics import apply_calibrator
 
 pytestmark = pytest.mark.usefixtures("rate_limits_off")
 

@@ -1,4 +1,4 @@
-"""Tests for the model builders, the equal-budget experiment runner and result merging.
+"""Tests for the model builders and fraudstudy.experiment (equal-budget runner, merging).
 
 Synthetic sample only. One quick run (2 models x 3 techniques) is shared by the module; it must
 finish in under 90 s, re-running must skip it, and ``force`` must reproduce it exactly.
@@ -21,35 +21,27 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 
 from fraudstudy.config import resolve
-from fraudstudy.evaluation import best_threshold
 from fraudstudy.experiment import (
-    Configs,
+    FOLD_COLUMNS,
     build_search_space,
-    get_protocol,
+    cell_paths,
+    fold_id,
     is_cell_done,
-    load_cell_record,
     load_training_data,
     merge_results,
+    plain_params,
+    protocol,
+    ratio_info,
+    read_fold_scores,
     run_cell,
     run_experiments,
-    space_size,
-)
-from fraudstudy.experiment.results import (
-    CELLS_DIR,
-    FOLD_COLUMNS,
-    cell_paths,
-    read_fold_scores,
+    save_fold_scores,
     scientific_view,
-    upsert_fold_scores,
-)
-from fraudstudy.experiment.runner import (
-    fold_id,
-    model_search_space,
-    ratio_info,
-    scalar_params,
+    space_size,
     stratified_subsample,
 )
 from fraudstudy.io import load_json, save_json
+from fraudstudy.metrics import best_threshold
 from fraudstudy.models import MODEL_NAMES, get_model
 from fraudstudy.pipeline import build_pipeline
 
@@ -70,17 +62,17 @@ def _load_script(name: str) -> ModuleType:
 
 
 @pytest.fixture(scope="module")
-def cfgs(test_cfgs: Configs) -> Configs:
+def cfgs(test_cfgs: dict) -> dict:
     return test_cfgs  # model_n_jobs capped for the sample (tests/conftest.py)
 
 
 @pytest.fixture(scope="module")
-def training(cfgs: Configs) -> tuple[pd.DataFrame, pd.Series, str]:
+def training(cfgs: dict) -> tuple[pd.DataFrame, pd.Series, str]:
     return load_training_data("sample", True, cfgs)
 
 
 @pytest.fixture(scope="module")
-def quick_run(tmp_path_factory: pytest.TempPathFactory, cfgs: Configs) -> dict[str, Any]:
+def quick_run(tmp_path_factory: pytest.TempPathFactory, cfgs: dict) -> dict[str, Any]:
     """One quick run of 2 models x 3 techniques on the sample, timed."""
     root = tmp_path_factory.mktemp("quick_run")
     results, models = root / "results", root / "models"
@@ -121,27 +113,26 @@ def test_get_model_rejects_unknown_and_random_state() -> None:
 
 
 @pytest.mark.parametrize("model", MODEL_NAMES)
-def test_pipeline_builds_every_model(model: str, cfgs: Configs) -> None:
-    pipe = build_pipeline(model, "smote_rus", cfg=cfgs.dataset, exp_cfg=cfgs.experiment)
+def test_pipeline_builds_every_model(model: str, cfgs: dict) -> None:
+    pipe = build_pipeline(model, "smote_rus", cfg=cfgs["dataset"], exp_cfg=cfgs["experiment"])
     assert [n for n, _ in pipe.steps] == ["preprocess", "smote", "rus", "model"]
-    assert pipe.named_steps["model"].random_state == cfgs.experiment["seed"]
+    assert pipe.named_steps["model"].random_state == cfgs["experiment"]["seed"]
 
 
 # --- search space and protocol ------------------------------------------------------------------
 
 
-def test_model_space_is_prefixed_and_rejects_class_weight(cfgs: Configs) -> None:
-    space = model_search_space("logreg", cfgs.models)
-    assert space == {f"model__{k}": v for k, v in cfgs.models["logreg"].items()}
+def test_model_space_is_prefixed_and_rejects_class_weight(cfgs: dict) -> None:
+    space = build_search_space("logreg", "baseline", cfgs["models"], cfgs["experiment"], 0.0017)
+    assert space == {f"model__{k}": v for k, v in cfgs["models"]["logreg"].items()}
+    bad = {"logreg": {"C": [1], "class_weight": ["balanced"]}}
     with pytest.raises(ValueError, match="class_weight"):
-        model_search_space("logreg", {"logreg": {"C": [1], "class_weight": ["balanced"]}})
-    with pytest.raises(ValueError, match="non-empty list"):
-        model_search_space("logreg", {"logreg": {"C": 1}})
+        build_search_space("logreg", "baseline", bad, cfgs["experiment"], 0.0017)
 
 
-def test_search_space_merges_model_space_into_each_hybrid_dict(cfgs: Configs) -> None:
+def test_search_space_merges_model_space_into_each_hybrid_dict(cfgs: dict) -> None:
     base = 0.0017
-    space = build_search_space("logreg", "smote_rus", cfgs.models, cfgs.experiment, base)
+    space = build_search_space("logreg", "smote_rus", cfgs["models"], cfgs["experiment"], base)
     assert isinstance(space, list) and len(space) == 9  # 3 a x 3 b, all a < b on real data
     for d in space:
         assert set(d) == {
@@ -150,24 +141,24 @@ def test_search_space_merges_model_space_into_each_hybrid_dict(cfgs: Configs) ->
             "smote__sampling_strategy",
             "rus__sampling_strategy",
         }
-    n_c = len(cfgs.models["logreg"]["C"])
+    n_c = len(cfgs["models"]["logreg"]["C"])
     assert space_size(space) == 9 * n_c
-    baseline = build_search_space("logreg", "baseline", cfgs.models, cfgs.experiment, base)
+    baseline = build_search_space("logreg", "baseline", cfgs["models"], cfgs["experiment"], base)
     assert space_size(baseline) == n_c
-    ros = build_search_space("random_forest", "ros", cfgs.models, cfgs.experiment, base)
-    rf_size = int(np.prod([len(v) for v in cfgs.models["random_forest"].values()]))
-    assert space_size(ros) == rf_size * len(cfgs.experiment["ratio_grid"])
+    ros = build_search_space("random_forest", "ros", cfgs["models"], cfgs["experiment"], base)
+    rf_size = int(np.prod([len(v) for v in cfgs["models"]["random_forest"].values()]))
+    assert space_size(ros) == rf_size * len(cfgs["experiment"]["ratio_grid"])
 
 
-def test_protocol_quick_and_full(cfgs: Configs) -> None:
-    exp = cfgs.experiment
-    quick, full = get_protocol(exp, True), get_protocol(exp, False)
-    assert (quick.cv_folds, quick.cv_repeats, quick.n_iter) == (
+def test_protocol_quick_and_full(cfgs: dict) -> None:
+    exp = cfgs["experiment"]
+    quick, full = protocol(exp, True), protocol(exp, False)
+    assert (quick["cv_folds"], quick["cv_repeats"], quick["n_iter"]) == (
         exp["quick"]["cv_folds"],
         exp["quick"]["cv_repeats"],
         exp["quick"]["n_iter"],
     )
-    assert (full.cv_folds, full.cv_repeats, full.n_iter, full.train_fraction) == (
+    assert (full["cv_folds"], full["cv_repeats"], full["n_iter"], full["train_fraction"]) == (
         exp["cv_folds"],
         exp["cv_repeats"],
         exp["tuning"]["n_iter"],
@@ -176,7 +167,7 @@ def test_protocol_quick_and_full(cfgs: Configs) -> None:
 
 
 def test_scalar_params_and_ratio_info() -> None:
-    params = scalar_params({"model__class_weight": {0: 1.0, 1: 50.0}, "model__C": np.float64(1)})
+    params = plain_params({"model__class_weight": {0: 1.0, 1: 50.0}, "model__C": np.float64(1)})
     assert params == {"model__class_weight": 50.0, "model__C": 1.0}
     base = 0.01
     assert ratio_info("baseline", {}, base) == (None, None, None)
@@ -218,16 +209,16 @@ def test_run_cell_accepts_training_data_only() -> None:
     assert params == ["model", "technique", "X_train", "y_train", "cfgs", "quick"]
 
 
-def test_run_cell_rejects_too_few_frauds(training: tuple[Any, ...], cfgs: Configs) -> None:
+def test_run_cell_rejects_too_few_frauds(training: tuple[Any, ...], cfgs: dict) -> None:
     X, y, _ = training
     keep = (y == 0) | (y.cumsum() <= 8)  # 8 frauds: training folds hold ~5 <= k_neighbors
     with pytest.raises(ValueError, match="frauds"):
         run_cell("logreg", "smote", X[keep], y[keep], cfgs, quick=True)
 
 
-def test_training_data_excludes_the_test_split(training: tuple[Any, ...], cfgs: Configs) -> None:
+def test_training_data_excludes_the_test_split(training: tuple[Any, ...], cfgs: dict) -> None:
     X, y, sha = training
-    expected_train = round(5980 * (1 - cfgs.experiment["test_size"]))  # 6000 rows - 20 dupes
+    expected_train = round(5980 * (1 - cfgs["experiment"]["test_size"]))  # 6000 rows - 20 dupes
     assert len(X) == len(y) == expected_train
     assert len(sha) == 64
 
@@ -245,18 +236,19 @@ def test_quick_run_is_fast_and_writes_valid_files(
     for m in MODELS:
         for t in TECHNIQUES:
             paths = cell_paths(m, t, results, models)
-            rec = load_cell_record(paths["record"])
-            assert (rec.model, rec.technique, rec.source, rec.quick) == (m, t, "sample", True)
+            rec = load_json(paths["record"])
+            assert (rec["model"], rec["technique"], rec["source"], rec["quick"]) == (
+                m, t, "sample", True)
             oof = np.load(paths["oof"])
             assert oof.shape == (len(y),) and np.all((oof >= 0) & (oof <= 1))
-            assert rec.thresholds == {
+            assert rec["thresholds"] == {
                 "f1": best_threshold(y, oof, "f1"),
                 "f2": best_threshold(y, oof, "f2"),
             }
             pipe = joblib.load(paths["pipeline"])
             assert pipe.predict_proba(X.iloc[:5]).shape == (5, 2)
-            assert len(rec.fold_scores) == rec.cv_folds * rec.cv_repeats
-            assert 0 < rec.cv_pr_auc_mean <= 1 and rec.cv_pr_auc_std >= 0
+            assert len(rec["fold_scores"]) == rec["cv_folds"] * rec["cv_repeats"]
+            assert 0 < rec["cv_pr_auc_mean"] <= 1 and rec["cv_pr_auc_std"] >= 0
     folds = read_fold_scores(results / "fold_scores.csv")
     assert list(folds.columns) == list(FOLD_COLUMNS)
     assert not folds.duplicated(subset=["model", "technique", "repeat", "fold"]).any()
@@ -273,12 +265,12 @@ def test_quick_run_is_fast_and_writes_valid_files(
     assert all(line.endswith(" s") for line in quick_run["lines"][1:])  # elapsed time per cell
 
 
-def test_equal_budget_across_cells(quick_run: dict[str, Any], cfgs: Configs) -> None:
-    budget = get_protocol(cfgs.experiment, True).n_iter
+def test_equal_budget_across_cells(quick_run: dict[str, Any], cfgs: dict) -> None:
+    budget = protocol(cfgs["experiment"], True)["n_iter"]
     for rec, _ in quick_run["out"]:
-        assert rec.n_iter_budget == budget
-        assert rec.n_candidates_evaluated == min(budget, rec.search_space_size)
-        assert len(rec.candidates) == rec.n_candidates_evaluated
+        assert rec["n_iter_budget"] == budget
+        assert rec["n_candidates_evaluated"] == min(budget, rec["search_space_size"])
+        assert len(rec["candidates"]) == rec["n_candidates_evaluated"]
 
 
 def test_fold_assignments_identical_across_cells(quick_run: dict[str, Any]) -> None:
@@ -293,21 +285,21 @@ def test_fold_assignments_identical_across_cells(quick_run: dict[str, Any]) -> N
 
 
 def test_resampling_audit_in_record(quick_run: dict[str, Any]) -> None:
-    recs = {(r.model, r.technique): r for r, _ in quick_run["out"]}
+    recs = {(r["model"], r["technique"]): r for r, _ in quick_run["out"]}
     smote = recs[("logreg", "smote")]
-    assert smote.n_train_after_resampling.fraud > smote.n_train_frauds
-    assert smote.n_synthetic > 0
-    assert smote.chosen_ratio is not None
+    assert smote["n_train_after_resampling"]["fraud"] > smote["n_train_frauds"]
+    assert smote["n_synthetic"] > 0
+    assert smote["chosen_ratio"] is not None
     for t in ("baseline", "class_weight"):
         r = recs[("lightgbm", t)]
-        assert r.n_train_after_resampling.fraud == r.n_train_frauds
-    assert recs[("logreg", "baseline")].chosen_ratio is None
-    assert recs[("lightgbm", "class_weight")].fraud_weight is not None
+        assert r["n_train_after_resampling"]["fraud"] == r["n_train_frauds"]
+    assert recs[("logreg", "baseline")]["chosen_ratio"] is None
+    assert recs[("lightgbm", "class_weight")]["fraud_weight"] is not None
 
 
-def test_rerun_skips_and_force_reproduces(quick_run: dict[str, Any], cfgs: Configs) -> None:
+def test_rerun_skips_and_force_reproduces(quick_run: dict[str, Any], cfgs: dict) -> None:
     results, models = quick_run["results"], quick_run["models"]
-    before = {(r.model, r.technique): r for r, _ in quick_run["out"]}
+    before = {(r["model"], r["technique"]): r for r, _ in quick_run["out"]}
     oof_before = {k: np.load(cell_paths(*k, results)["oof"]) for k in before}
     n_rows = len(read_fold_scores(results / "fold_scores.csv"))
 
@@ -329,7 +321,7 @@ def test_rerun_skips_and_force_reproduces(quick_run: dict[str, Any], cfgs: Confi
     )
     assert [s for _, s in forced] == ["ran"] * len(forced)
     for rec, _ in forced:
-        key = (rec.model, rec.technique)
+        key = (rec["model"], rec["technique"])
         assert scientific_view(rec) == scientific_view(before[key])
         np.testing.assert_array_equal(np.load(cell_paths(*key, results)["oof"]), oof_before[key])
     assert len(read_fold_scores(results / "fold_scores.csv")) == n_rows  # replaced, not appended
@@ -337,10 +329,10 @@ def test_rerun_skips_and_force_reproduces(quick_run: dict[str, Any], cfgs: Confi
 
 def test_cell_from_other_mode_is_not_done(quick_run: dict[str, Any]) -> None:
     results = quick_run["results"]
-    assert is_cell_done("logreg", "baseline", results, quick=True, source="sample", seed=42)
-    assert not is_cell_done("logreg", "baseline", results, quick=False, source="sample", seed=42)
-    assert not is_cell_done("logreg", "baseline", results, quick=True, source="raw", seed=42)
-    assert not is_cell_done("logreg", "rus", results, quick=True, source="sample", seed=42)
+    assert is_cell_done("logreg", "baseline", results, True, "sample", 42)
+    assert not is_cell_done("logreg", "baseline", results, False, "sample", 42)
+    assert not is_cell_done("logreg", "baseline", results, True, "raw", 42)
+    assert not is_cell_done("logreg", "rus", results, True, "sample", 42)
 
 
 def test_upsert_replaces_rows_of_the_same_cell(tmp_path: Path) -> None:
@@ -361,9 +353,9 @@ def test_upsert_replaces_rows_of_the_same_cell(tmp_path: Path) -> None:
         )
 
     path = tmp_path / "fold_scores.csv"
-    upsert_fold_scores(rows("logreg", 0.1), path)
-    upsert_fold_scores(rows("lightgbm", 0.2), path)
-    upsert_fold_scores(rows("logreg", 0.3), path)
+    save_fold_scores(rows("logreg", 0.1), path)
+    save_fold_scores(rows("lightgbm", 0.2), path)
+    save_fold_scores(rows("logreg", 0.3), path)
     df = read_fold_scores(path)
     assert len(df) == 4
     assert set(df.loc[df["model"] == "logreg", "pr_auc"]) == {0.3}
@@ -374,27 +366,27 @@ def test_upsert_replaces_rows_of_the_same_cell(tmp_path: Path) -> None:
 
 def _split_copy(src: Path, dest: Path, models: list[str]) -> Path:
     """Copy the cells of ``models`` from results folder ``src`` to ``dest`` (a "machine")."""
-    (dest / CELLS_DIR).mkdir(parents=True)
-    for path in (src / CELLS_DIR).iterdir():
+    (dest / "cells").mkdir(parents=True)
+    for path in (src / "cells").iterdir():
         if path.name.split("__")[0] in models:
-            shutil.copy2(path, dest / CELLS_DIR / path.name)
+            shutil.copy2(path, dest / "cells" / path.name)
     return dest
 
 
 def test_merge_combines_machines_and_reports_missing(
-    quick_run: dict[str, Any], tmp_path: Path, cfgs: Configs
+    quick_run: dict[str, Any], tmp_path: Path, cfgs: dict
 ) -> None:
     src = quick_run["results"]
     a = _split_copy(src, tmp_path / "a", ["logreg"])
     b = _split_copy(src, tmp_path / "b", ["lightgbm"])
     c = _split_copy(src, tmp_path / "c", ["lightgbm"])  # same cells again
     out = tmp_path / "merged"
-    exp = cfgs.experiment
+    exp = cfgs["experiment"]
     report = merge_results([a, b, c], out, list(exp["models"]), list(exp["techniques"]))
-    assert len(report.cells) == 6
-    assert len(report.missing) == 18 - 6 and ("random_forest", "smote") in report.missing
-    assert sorted(report.duplicates) == sorted(("lightgbm", t) for t in TECHNIQUES)
-    assert report.conflicts == []
+    assert len(report["cells"]) == 6
+    assert len(report["missing"]) == 18 - 6 and ("random_forest", "smote") in report["missing"]
+    assert sorted(report["duplicates"]) == sorted(("lightgbm", t) for t in TECHNIQUES)
+    assert report["conflicts"] == []
     summary = load_json(out / "cv_summary.json")
     assert summary["n_cells"] == 6 and len(summary["missing"]) == 12
     merged = read_fold_scores(out / "fold_scores.csv")
@@ -404,13 +396,13 @@ def test_merge_combines_machines_and_reports_missing(
         merged.sort_values(key).reset_index(drop=True),
         original.sort_values(key).reset_index(drop=True),
     )
-    assert len(list((out / CELLS_DIR).glob("*_oof.npy"))) == 6
+    assert len(list((out / "cells").glob("*_oof.npy"))) == 6
 
 
 def test_merge_rejects_incomparable_cells(quick_run: dict[str, Any], tmp_path: Path) -> None:
     a = _split_copy(quick_run["results"], tmp_path / "a", ["logreg"])
     b = _split_copy(quick_run["results"], tmp_path / "b", ["lightgbm"])
-    path = b / CELLS_DIR / "lightgbm__baseline.json"
+    path = b / "cells" / "lightgbm__baseline.json"
     data = load_json(path)
     data["train_sha256"] = "0" * 64
     save_json(data, path)

@@ -7,7 +7,6 @@ few resamples to keep the module fast; the export does not depend on either.
 """
 
 import copy
-import dataclasses
 import importlib.util
 import shutil
 from pathlib import Path
@@ -23,10 +22,7 @@ import yaml
 from fraudstudy import config, export
 from fraudstudy.config import resolve
 from fraudstudy.contracts import Manifest, PresetsFile
-from fraudstudy.evaluation import fit_isotonic
-from fraudstudy.experiment import Configs, load_cell_record, run_experiments
-from fraudstudy.experiment.results import cell_paths
-from fraudstudy.experiment.test_eval import evaluate_test, open_test_set
+from fraudstudy.experiment import cell_paths, run_experiments
 from fraudstudy.explain import FeatureReference, compute_contributions, explain
 from fraudstudy.export import (
     DEMO_BATCH_FILE,
@@ -42,7 +38,9 @@ from fraudstudy.export import (
     pick_presets,
     size_warnings,
 )
+from fraudstudy.final_test import evaluate_test, open_test_set
 from fraudstudy.io import load_json, sha256_file
+from fraudstudy.metrics import fit_calibrator
 
 DEFAULT = "lightgbm__smote_rus"
 DEPLOY_CELLS = ["lightgbm__baseline", "lightgbm__smote_rus", "logreg__<technique>"]
@@ -73,13 +71,13 @@ def _noop(_: str) -> None:
 
 
 @pytest.fixture(scope="module")
-def cfgs(test_cfgs: Configs) -> Configs:
+def cfgs(test_cfgs: dict) -> dict:
     """test_cfgs with three deploy cells, a one-point LightGBM space and a tiny bootstrap."""
-    experiment = copy.deepcopy(test_cfgs.experiment)
+    experiment = copy.deepcopy(test_cfgs["experiment"])
     experiment["deploy"]["cells"] = list(DEPLOY_CELLS)
     experiment["bootstrap"]["n_resamples"] = 20
-    models = {**copy.deepcopy(test_cfgs.models), "lightgbm": TINY_LIGHTGBM}
-    return dataclasses.replace(test_cfgs, experiment=experiment, models=models)
+    models = {**copy.deepcopy(test_cfgs["models"]), "lightgbm": TINY_LIGHTGBM}
+    return {**test_cfgs, "experiment": experiment, "models": models}
 
 
 def _out(root: Path) -> ExportPaths:
@@ -87,7 +85,7 @@ def _out(root: Path) -> ExportPaths:
 
 
 @pytest.fixture(scope="module")
-def run(tmp_path_factory: pytest.TempPathFactory, cfgs: Configs) -> dict[str, Any]:
+def run(tmp_path_factory: pytest.TempPathFactory, cfgs: dict) -> dict[str, Any]:
     """Quick-run, evaluate (sample) and export the three cells once."""
     root = tmp_path_factory.mktemp("export")
     results, models = root / "results", root / "models"
@@ -126,14 +124,14 @@ def workdir(run: dict[str, Any], tmp_path: Path) -> dict[str, Path]:
 # --- default cell and deploy settings ------------------------------------------------------------
 
 
-def test_refuses_without_a_default_cell(run: dict[str, Any], cfgs: Configs) -> None:
-    assert cfgs.experiment["deploy"]["default_cell"] is None
+def test_refuses_without_a_default_cell(run: dict[str, Any], cfgs: dict) -> None:
+    assert cfgs["experiment"]["deploy"]["default_cell"] is None
     with pytest.raises(ValueError, match="TEAM chooses it"):
         export_artifacts("sample", run["results"], run["models"], out=run["out"], cfgs=cfgs)
 
 
-def test_deploy_settings_resolve_the_logreg_placeholder(cfgs: Configs) -> None:
-    exp = cfgs.experiment
+def test_deploy_settings_resolve_the_logreg_placeholder(cfgs: dict) -> None:
+    exp = cfgs["experiment"]
     assert deploy_settings(exp, DEFAULT).cells == EXPORTED
     assert deploy_settings(exp, "logreg__smote_rus").cells == EXPORTED
     assert deploy_settings(exp, "lightgbm__baseline").cells[-1] == "logreg__baseline"
@@ -156,24 +154,24 @@ def test_deploy_settings_resolve_the_logreg_placeholder(cfgs: Configs) -> None:
     ],
 )
 def test_deploy_settings_reject_bad_input(
-    cfgs: Configs, change: dict[str, Any], default: str, message: str
+    cfgs: dict, change: dict[str, Any], default: str, message: str
 ) -> None:
-    exp = copy.deepcopy(cfgs.experiment)
+    exp = copy.deepcopy(cfgs["experiment"])
     exp["deploy"].update(change)
     with pytest.raises(ValueError, match=message):
         deploy_settings(exp, default)
 
 
-def test_deploy_settings_check_the_input_range_percentiles(cfgs: Configs) -> None:
-    exp = copy.deepcopy(cfgs.experiment)
+def test_deploy_settings_check_the_input_range_percentiles(cfgs: dict) -> None:
+    exp = copy.deepcopy(cfgs["experiment"])
     assert deploy_settings(exp, DEFAULT).input_range_percentiles == (0.1, 99.9)
     exp["deploy"]["input_range_percentiles"] = [99.9, 0.1]
     with pytest.raises(ValueError, match="Range percentiles"):
         deploy_settings(exp, DEFAULT)
 
 
-def test_deploy_block_is_required(cfgs: Configs) -> None:
-    exp = {k: v for k, v in cfgs.experiment.items() if k != "deploy"}
+def test_deploy_block_is_required(cfgs: dict) -> None:
+    exp = {k: v for k, v in cfgs["experiment"].items() if k != "deploy"}
     with pytest.raises(ValueError, match="deploy"):
         deploy_settings(exp, DEFAULT)
 
@@ -188,15 +186,15 @@ def test_manifest_validates_and_sha256_match_files(run: dict[str, Any]) -> None:
     assert [m.id for m in manifest.models] == EXPORTED
     assert manifest.dataset.source == "synthetic" and manifest.quick_mode
     for m in manifest.models:
-        record = load_cell_record(cell_paths(m.model, m.technique, run["results"])["record"])
+        record = load_json(cell_paths(m.model, m.technique, run["results"])["record"])
         assert m.sha256 == sha256_file(out.models / m.file)
         assert m.calibrator_file is not None and m.has_calibrator
         assert m.calibrator_sha256 == sha256_file(out.models / m.calibrator_file)
         assert (m.threshold_f1, m.threshold_f2) == (
-            record.thresholds["f1"],
-            record.thresholds["f2"],
+            record["thresholds"]["f1"],
+            record["thresholds"]["f2"],
         )
-        assert m.default_threshold == "f1" and m.data_sha256 == record.data_sha256
+        assert m.default_threshold == "f1" and m.data_sha256 == record["data_sha256"]
         assert m.features == [f"V{i}" for i in range(1, 29)] + ["Amount"]
         assert m.model_label and m.technique_label
         assert {"scikit-learn", "lightgbm", "imbalanced-learn"} <= set(m.library_versions)
@@ -220,7 +218,7 @@ def test_calibrators_are_fitted_on_out_of_fold_scores(run: dict[str, Any]) -> No
     for m in manifest.models:
         oof = np.load(cell_paths(m.model, m.technique, run["results"])["oof"])
         calibrator = joblib.load(run["out"].models / str(m.calibrator_file))
-        expected = fit_isotonic(oof, y_train).predict(grid)
+        expected = fit_calibrator(oof, y_train).predict(grid)
         np.testing.assert_array_equal(calibrator.predict(grid), expected)
         assert np.all(np.diff(expected) >= 0) and 0.0 <= expected.min() <= expected.max() <= 1.0
 
@@ -239,11 +237,11 @@ def test_feature_reference_explains_every_deployed_model(run: dict[str, Any]) ->
         assert len(explain(pipe, rows.iloc[[0]], reference).top_features) == 8
 
 
-def test_feature_reference_has_training_ranges(run: dict[str, Any], cfgs: Configs) -> None:
+def test_feature_reference_has_training_ranges(run: dict[str, Any], cfgs: dict) -> None:
     reference = FeatureReference.model_validate(
         load_json(run["out"].models / FEATURE_REFERENCE_FILE)
     )
-    percentiles = tuple(cfgs.experiment["deploy"]["input_range_percentiles"])
+    percentiles = tuple(cfgs["experiment"]["deploy"]["input_range_percentiles"])
     assert reference.range_percentiles == percentiles
     X_train = run["data"].X_train
     for f in reference.features:
@@ -264,16 +262,16 @@ def test_report_lists_every_file_and_the_total_size(run: dict[str, Any]) -> None
 
 
 def test_presets_are_real_test_rows_that_follow_the_rules(
-    run: dict[str, Any], cfgs: Configs
+    run: dict[str, Any], cfgs: dict
 ) -> None:
     out: ExportPaths = run["out"]
     presets = PresetsFile.model_validate(load_json(out.demo / PRESETS_FILE)).presets
     manifest = Manifest.model_validate(load_json(out.models / MANIFEST_FILE))
     entry = next(m for m in manifest.models if m.id == DEFAULT)
     pipe, thr = joblib.load(out.models / entry.file), entry.threshold_f1
-    rules = deploy_settings(cfgs.experiment, DEFAULT).presets
+    rules = deploy_settings(cfgs["experiment"], DEFAULT).presets
     test_rows = run["data"].test_rows
-    columns = ["Time", *cfgs.dataset["pca_features"], "Amount"]
+    columns = ["Time", *cfgs["dataset"]["pca_features"], "Amount"]
     ids = [p.id for p in presets] + run["report"].skipped_presets
     assert sorted(ids) == sorted(export.PRESET_TEXT)
     matched = []
@@ -339,10 +337,10 @@ def test_pick_presets_skips_presets_without_candidates() -> None:
     assert skipped == ["fraud_typical", "fraud_small_amount", "borderline", "missed_fraud"]
 
 
-def test_demo_batch_has_class_column_and_some_fraud(run: dict[str, Any], cfgs: Configs) -> None:
+def test_demo_batch_has_class_column_and_some_fraud(run: dict[str, Any], cfgs: dict) -> None:
     batch = pd.read_csv(run["out"].batch)
     test_rows = run["data"].test_rows
-    settings = deploy_settings(cfgs.experiment, DEFAULT)
+    settings = deploy_settings(cfgs["experiment"], DEFAULT)
     assert list(batch.columns) == list(test_rows.columns)
     assert len(batch) == settings.demo_batch_rows
     assert batch["Class"].sum() == min(settings.demo_batch_frauds, int(test_rows["Class"].sum()))
@@ -354,7 +352,7 @@ def test_demo_batch_has_class_column_and_some_fraud(run: dict[str, Any], cfgs: C
 
 
 def test_guard_requires_the_test_evaluation_and_a_reason_to_repeat(
-    workdir: dict[str, Path], cfgs: Configs
+    workdir: dict[str, Path], cfgs: dict
 ) -> None:
     guard = workdir["root"] / "TEST_SET_OPENED.json"
     kwargs: dict[str, Any] = {
@@ -377,7 +375,7 @@ def test_guard_requires_the_test_evaluation_and_a_reason_to_repeat(
 
 
 def test_refuses_a_pipeline_changed_after_the_test_evaluation(
-    workdir: dict[str, Path], cfgs: Configs
+    workdir: dict[str, Path], cfgs: dict
 ) -> None:
     path = cell_paths("lightgbm", "baseline", workdir["results"], workdir["models"])["pipeline"]
     joblib.dump(joblib.load(path), path, compress=1)
@@ -393,8 +391,8 @@ def test_refuses_a_pipeline_changed_after_the_test_evaluation(
         )
 
 
-def test_refuses_cells_that_did_not_run(workdir: dict[str, Path], cfgs: Configs) -> None:
-    exp = copy.deepcopy(cfgs.experiment)
+def test_refuses_cells_that_did_not_run(workdir: dict[str, Path], cfgs: dict) -> None:
+    exp = copy.deepcopy(cfgs["experiment"])
     exp["deploy"]["cells"] = [*DEPLOY_CELLS, "lightgbm__ros"]
     with pytest.raises(ValueError, match="lightgbm__ros"):
         export_artifacts(
@@ -403,13 +401,13 @@ def test_refuses_cells_that_did_not_run(workdir: dict[str, Path], cfgs: Configs)
             workdir["models"],
             DEFAULT,
             _out(workdir["root"]),
-            cfgs=dataclasses.replace(cfgs, experiment=exp),
+            cfgs={**cfgs, "experiment": exp},
             log=_noop,
         )
 
 
 def test_refuses_other_library_versions(
-    workdir: dict[str, Path], cfgs: Configs, monkeypatch: pytest.MonkeyPatch
+    workdir: dict[str, Path], cfgs: dict, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     real = export.library_versions()
     monkeypatch.setattr(export, "library_versions", lambda: {**real, "lightgbm": "0.0.1"})
@@ -436,15 +434,15 @@ def test_size_warnings_flag_large_files(tmp_path: Path) -> None:
 
 def test_cli_exports_and_refuses_without_default(
     workdir: dict[str, Path],
-    cfgs: Configs,
+    cfgs: dict,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     config_dir = workdir["root"] / "configs"
     config_dir.mkdir()
-    for name, data in (("dataset", cfgs.dataset), ("experiment", cfgs.experiment)):
+    for name, data in (("dataset", cfgs["dataset"]), ("experiment", cfgs["experiment"])):
         (config_dir / f"{name}.yaml").write_text(yaml.safe_dump(data), encoding="utf-8")
-    (config_dir / "models.yaml").write_text(yaml.safe_dump(cfgs.models), encoding="utf-8")
+    (config_dir / "models.yaml").write_text(yaml.safe_dump(cfgs["models"]), encoding="utf-8")
     monkeypatch.setattr(config, "CONFIG_DIR", config_dir)
     out = workdir["root"] / "cli"
     args = [

@@ -1,4 +1,4 @@
-"""Tests for fraudstudy.evaluation.stats, fraudstudy.evaluation.figures, scripts/run_stats.py and
+"""Tests for fraudstudy.stats, fraudstudy.figures, scripts/run_stats.py and
 scripts/make_figures.py.
 
 Statistics are checked on hand-built fold-score tables; figures are drawn from the contract
@@ -20,28 +20,12 @@ from PIL import Image
 from pydantic import ValidationError
 from scipy import stats as sps
 
-from fraudstudy.config import resolve
-from fraudstudy.contracts import (
-    ComparisonTable,
-    CurvesFile,
-    PairwiseTest,
-    ResamplingAudit,
-    StatsResult,
-)
-from fraudstudy.evaluation import figures
-from fraudstudy.evaluation import stats as st
-from fraudstudy.experiment import Configs, run_experiments
-from fraudstudy.experiment.results import (
-    CELLS_DIR,
-    FOLD_SCORES_FILE,
-    FoldScore,
-    cell_id,
-    fold_frame,
-    load_cell_record,
-    source_fold_scores,
-    upsert_fold_scores,
-)
-from fraudstudy.experiment.test_eval import COMPARISON_FILE, CURVES_FILE, SAMPLE_EVAL_DIR
+from fraudstudy import figures
+from fraudstudy import stats as st
+from fraudstudy.config import load_configs, resolve
+from fraudstudy.contracts import PairwiseTest, StatsResult
+from fraudstudy.experiment import fold_rows, run_experiments, save_fold_scores, source_fold_scores
+from fraudstudy.final_test import COMPARISON_FILE, CURVES_FILE, SAMPLE_EVAL_DIR
 from fraudstudy.io import load_json, save_json
 
 MODELS = ["logreg", "random_forest", "lightgbm"]
@@ -90,7 +74,7 @@ def _fold_scores(
     return pd.DataFrame(rows)
 
 
-def _compute(fold_scores: pd.DataFrame) -> StatsResult:
+def _compute(fold_scores: pd.DataFrame) -> dict:
     return st.compute_stats(
         fold_scores, MODELS, TECHNIQUES, alpha=0.05, n_bootstrap=1000, confidence=0.95, seed=42
     )
@@ -100,13 +84,16 @@ def _compute(fold_scores: pd.DataFrame) -> StatsResult:
 
 
 def test_nemenyi_cd_matches_demsar_2006() -> None:
-    assert st.nemenyi_q(6, 0.05) == pytest.approx(2.850, abs=1e-3)
+    assert st.NEMENYI_Q[0.05][6] == 2.850  # Demsar (2006), Table 5(a)
     assert st.critical_difference(6, 15, 0.05) == pytest.approx(1.95, abs=0.01)
+    # The table agrees with the studentized range distribution it was computed from.
+    for k, q in st.NEMENYI_Q[0.05].items():
+        assert q == pytest.approx(sps.studentized_range.ppf(0.95, k, np.inf) / np.sqrt(2), abs=1e-3)
 
 
 def test_cd_shrinks_with_more_blocks_and_rejects_bad_input() -> None:
     assert st.critical_difference(6, 45, 0.05) < st.critical_difference(6, 15, 0.05)
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="k=1"):
         st.critical_difference(1, 15, 0.05)
 
 
@@ -156,46 +143,48 @@ def test_average_ranks_one_is_best() -> None:
 def test_technique_better_on_every_fold_is_significant_after_holm() -> None:
     result = _compute(_fold_scores(shift={"smote": 0.05}, noise=0.005))
     for model in MODELS:
-        smote = next(t for t in result.pairwise if t.model == model and t.technique_a == "smote")
-        assert (smote.wins, smote.ties, smote.losses) == (15, 0, 0)
-        assert smote.p_value_adjusted < 0.05 and smote.significant
-        assert smote.median_difference == pytest.approx(0.05, abs=0.01)
-        friedman = next(f for f in result.friedman if f.scope == model)
-        assert min(friedman.average_ranks, key=friedman.average_ranks.get) == "smote"
+        smote = next(t for t in result["pairwise"]
+                     if t["model"] == model and t["technique_a"] == "smote")
+        assert (smote["wins"], smote["ties"], smote["losses"]) == (15, 0, 0)
+        assert smote["p_value_adjusted"] < 0.05 and smote["significant"]
+        assert smote["median_difference"] == pytest.approx(0.05, abs=0.01)
+        friedman = next(f for f in result["friedman"] if f["scope"] == model)
+        ranks = friedman["average_ranks"]
+        assert min(ranks, key=ranks.get) == "smote"
 
 
 def test_identical_scores_give_p_one_without_crashing() -> None:
     result = _compute(_fold_scores(noise=0.0))
-    assert len(result.pairwise) == len(MODELS) * (len(TECHNIQUES) - 1)
-    for t in result.pairwise:
-        assert t.p_value == 1.0 and t.p_value_adjusted == 1.0 and not t.significant
-        assert (t.wins, t.ties, t.losses) == (0, 15, 0)
-        assert t.statistic == 0.0 and t.difference == 0.0
-    for f in result.friedman:
-        assert f.statistic == 0.0 and f.p_value == 1.0
-        assert set(f.average_ranks.values()) == {3.5}
+    assert len(result["pairwise"]) == len(MODELS) * (len(TECHNIQUES) - 1)
+    for t in result["pairwise"]:
+        assert t["p_value"] == 1.0 and t["p_value_adjusted"] == 1.0 and not t["significant"]
+        assert (t["wins"], t["ties"], t["losses"]) == (0, 15, 0)
+        assert t["statistic"] == 0.0 and t["difference"] == 0.0
+    for f in result["friedman"]:
+        assert f["statistic"] == 0.0 and f["p_value"] == 1.0
+        assert set(f["average_ranks"].values()) == {3.5}
 
 
 def test_stats_result_shape_and_notes() -> None:
     result = _compute(_fold_scores())
-    assert StatsResult.model_validate(result.model_dump(mode="json")) == result
-    assert [f.scope for f in result.friedman] == [*MODELS, "all"]
-    pooled = result.friedman[-1]
-    assert pooled.n_blocks == len(MODELS) * N_REPEATS * N_FOLDS
-    assert all(f.n_blocks == 15 for f in result.friedman[:-1])
-    assert result.friedman[0].critical_difference == pytest.approx(1.95, abs=0.01)
-    assert {(t.technique_a, t.technique_b) for t in result.pairwise} == {
+    StatsResult.model_validate(result)  # the plain dict has the stats.json contract shape
+    assert [f["scope"] for f in result["friedman"]] == [*MODELS, "all"]
+    pooled = result["friedman"][-1]
+    assert pooled["n_blocks"] == len(MODELS) * N_REPEATS * N_FOLDS
+    assert all(f["n_blocks"] == 15 for f in result["friedman"][:-1])
+    assert result["friedman"][0]["critical_difference"] == pytest.approx(1.95, abs=0.01)
+    assert {(t["technique_a"], t["technique_b"]) for t in result["pairwise"]} == {
         (t, "baseline") for t in TECHNIQUES[1:]
     }
-    assert st.DEPENDENCE_NOTE in result.notes and result.correction == "holm"
+    assert st.DEPENDENCE_NOTE in result["notes"] and result["correction"] == "holm"
 
 
 def test_partial_models_and_techniques() -> None:
     scores = _fold_scores()
     scores = scores[(scores["model"] == "logreg") & scores["technique"].isin(TECHNIQUES[:3])]
     result = _compute(scores)
-    assert [f.scope for f in result.friedman] == ["logreg"]  # no pooled test for one model
-    assert len(result.pairwise) == 2
+    assert [f["scope"] for f in result["friedman"]] == ["logreg"]  # no pooled test for one model
+    assert len(result["pairwise"]) == 2
 
 
 # --- pairing checks -----------------------------------------------------------------------------
@@ -247,7 +236,7 @@ def test_pairwise_contract_checks_win_tie_loss_total() -> None:
 
 def test_findings_has_tables_and_empty_interpretation(tmp_path: Path) -> None:
     result = _compute(_fold_scores())
-    comparison = ComparisonTable.model_validate(load_json(EXAMPLES / "comparison.json"))
+    comparison = load_json(EXAMPLES / "comparison.json")
     path = tmp_path / "findings.md"
     text = st.findings_markdown(result, comparison, [tmp_path / "x.png"], path, "raw")
     assert text.rstrip().endswith(st.INTERPRETATION_HEADING)
@@ -278,11 +267,10 @@ def test_findings_keeps_team_interpretation(tmp_path: Path) -> None:
 
 @pytest.fixture(scope="module")
 def example_artifacts() -> dict[str, object]:
-    comparison = ComparisonTable.model_validate(load_json(EXAMPLES / "comparison.json"))
     return {
-        "comparison": comparison,
-        "curves": CurvesFile.model_validate(load_json(EXAMPLES / "curves.json")),
-        "audit": ResamplingAudit.model_validate(load_json(EXAMPLES / "resampling_audit.json")),
+        "comparison": load_json(EXAMPLES / "comparison.json"),
+        "curves": load_json(EXAMPLES / "curves.json"),
+        "audit": load_json(EXAMPLES / "resampling_audit.json"),
         "fold_scores": _fold_scores(),
         "stats": _compute(_fold_scores()),
     }
@@ -295,9 +283,9 @@ def test_cliques_group_ranks_within_cd() -> None:
 
 
 def test_fraud_rate_from_counts(example_artifacts: dict[str, object]) -> None:
-    record = example_artifacts["comparison"].records[0]  # type: ignore[attr-defined]
-    m = record.test_at_0_5
-    assert figures.fraud_rate(m) == pytest.approx((m.tp + m.fn) / (m.tp + m.fp + m.tn + m.fn))
+    m = example_artifacts["comparison"]["records"][0]["test_at_0_5"]  # type: ignore[index]
+    total = m["tp"] + m["fp"] + m["tn"] + m["fn"]
+    assert figures.fraud_rate(m) == pytest.approx((m["tp"] + m["fn"]) / total)
 
 
 def test_all_figures_are_written(
@@ -320,21 +308,18 @@ def test_all_figures_are_written(
 
 def test_figures_are_300_dpi(example_artifacts: dict[str, object], tmp_path: Path) -> None:
     stats = example_artifacts["stats"]
-    path = figures.plot_cd_diagram(stats.friedman[0], tmp_path / "cd.png")  # type: ignore[attr-defined]
+    path = figures.plot_cd_diagram(stats["friedman"][0], tmp_path / "cd.png")  # type: ignore[index]
     with Image.open(path) as image:
         assert image.info["dpi"] == pytest.approx((300, 300), abs=0.5)
 
 
 def test_figures_refuse_empty_inputs(tmp_path: Path) -> None:
-    empty = ComparisonTable(dataset_source="synthetic", records=[])
     with pytest.raises(ValueError):
-        figures.plot_pr_auc_with_ci(empty, 0.95, tmp_path / "x.png")
+        figures.plot_pr_auc_with_ci({"records": []}, 0.95, tmp_path / "x.png")
     with pytest.raises(ValueError):
         figures.plot_fold_boxplots(_fold_scores().iloc[:0], tmp_path / "x.png")
-    audit = ResamplingAudit.model_validate(load_json(EXAMPLES / "resampling_audit.json"))
-    audit = audit.model_copy(update={"entries": []})
     with pytest.raises(ValueError):
-        figures.resampling_counts_table(audit)
+        figures.resampling_counts_table({"entries": []})
 
 
 def test_figures_dir_for_keeps_sample_figures_apart() -> None:
@@ -353,17 +338,14 @@ def sample_results(tmp_path_factory: pytest.TempPathFactory) -> Path:
     results = root / "results"
     run_experiments(
         "sample", True, results, root / "models", ["logreg"], ["baseline"],
-        cfgs=Configs.load(), log=lambda _: None,
+        cfgs=load_configs(), log=lambda _: None,
     )  # fmt: skip
-    base = load_cell_record(results / CELLS_DIR / f"{cell_id('logreg', 'baseline')}.json")
+    base = load_json(results / "cells" / "logreg__baseline.json")
     for i, technique in enumerate(TECHNIQUES[1:], start=1):
-        folds = [
-            FoldScore(**{**f.model_dump(), "pr_auc": min(1.0, f.pr_auc + 0.01 * i)})
-            for f in base.fold_scores
-        ]
-        record = base.model_copy(update={"technique": technique, "fold_scores": folds})
-        save_json(record.model_dump(mode="json"), results / CELLS_DIR / f"logreg__{technique}.json")
-        upsert_fold_scores(fold_frame(record), results / FOLD_SCORES_FILE)
+        folds = [{**f, "pr_auc": min(1.0, f["pr_auc"] + 0.01 * i)} for f in base["fold_scores"]]
+        record = {**base, "technique": technique, "fold_scores": folds}
+        save_json(record, results / "cells" / f"logreg__{technique}.json")
+        save_fold_scores(fold_rows(record), results / "fold_scores.csv")
     return results
 
 
