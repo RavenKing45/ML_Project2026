@@ -9,7 +9,7 @@ scipy==1.17.1
 statsmodels==0.15.0
 matplotlib==3.11.2
 joblib==1.6.0
-streamlit==1.66.1
+notebook==7.6.3
 pytest==9.1.1
 -e .
 -e ./model_build

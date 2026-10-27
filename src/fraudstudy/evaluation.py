@@ -1,14 +1,12 @@
-"""The one-time test-set evaluation, the significance tests and the report figures.
+"""The one-time test-set evaluation and the significance tests: numbers only.
 
 evaluate_test_set() is the ONLY code that touches the test rows: it scores every finished cell
-once, behind a guard file, and also picks 5 example test payments for the app.
-significance_tests() compares the techniques on the repeated-CV fold scores, and make_figures()
-draws the report figures. Reads artifacts/metrics/cells/*.json and artifacts/models/*.joblib;
-writes test_results.json, presets.json and stats.json in artifacts/metrics/ and PNGs in
-artifacts/figures/ (all under artifacts/sample/ for the fake sample).
+once, behind a guard file. significance_tests() compares the techniques on the repeated-CV fold
+scores. Reads artifacts/metrics/cells/*.json and artifacts/models/*.joblib; writes
+test_results.json and stats.json in artifacts/metrics/ (artifacts/sample/metrics/ for the fake
+sample). notebooks/03_results.ipynb reads these files and draws the tables and figures.
 
-Run it: python -m fraudstudy.evaluation [--source sample] --test --default-cell <cell>
-    [--rerun-reason "..."] | --stats | --figures
+Run it: python -m fraudstudy.evaluation [--source sample] [--test [--rerun-reason "..."]] [--stats]
 """
 
 import argparse
@@ -16,7 +14,6 @@ import json
 from datetime import date
 
 import joblib
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.stats import friedmanchisquare, wilcoxon
@@ -42,8 +39,6 @@ N_BOOTSTRAP = 1000  # resamples for the PR-AUC confidence interval
 ALPHA = 0.05  # significance level, and 1 - ALPHA = 95% confidence intervals
 GUARD_FILE = "TEST_SET_OPENED.json"  # written in artifacts/metrics/ the first time the test is used
 CURVE_POINTS = 101  # at most this many points per saved PR or ROC curve
-LABELS = {"baseline": "A baseline", "ros": "B ROS", "rus": "C RUS", "smote": "D SMOTE",
-          "smote_rus": "E SMOTE+RUS", "class_weight": "F class weight"}
 # --------------------------------------------------------------------------------------------------
 
 
@@ -125,60 +120,20 @@ def open_guard(source: str, cells: list[str], rerun_reason: str | None) -> None:
     guard.write_text(json.dumps(log, indent=2), encoding="utf-8")
 
 
-def pick_presets(X_test: pd.DataFrame, y_test: pd.Series, scores: np.ndarray,
-                 threshold: float) -> list[dict]:
-    """5 example test payments for the app, scored by the team's default cell.
-
-    Each rule takes the row with the middle score among the rows that match it (the borderline
-    one: the score closest to the threshold), and no row is used twice.
-    """
-    y, amount, flagged = np.asarray(y_test), X_test["Amount"].to_numpy(), scores >= threshold
-    large = np.quantile(amount[y == 0], 0.99)  # "large" = top 1% of legit amounts
-    rules = [
-        ("caught_fraud", "A fraud the model catches", (y == 1) & flagged),
-        ("missed_fraud", "A fraud the model misses", (y == 1) & ~flagged),
-        ("everyday_legit", "An everyday legitimate payment",
-         (y == 0) & (amount >= 5) & (amount <= 50) & ~flagged),
-        ("large_legit", "A large legitimate payment", (y == 0) & (amount >= large) & ~flagged),
-        ("borderline", "A payment scored close to the threshold", np.ones(len(y), dtype=bool)),
-    ]
-    used = np.zeros(len(y), dtype=bool)
-    presets = []
-    for preset_id, label, matches in rules:
-        rows = np.flatnonzero(matches & ~used)
-        if len(rows) == 0:
-            print(f"no test row matches preset {preset_id}; it is left out")
-            continue
-        if preset_id == "borderline":
-            row = rows[np.argmin(np.abs(scores[rows] - threshold))]
-        else:
-            row = rows[np.argsort(scores[rows], kind="stable")][(len(rows) - 1) // 2]
-        used[row] = True
-        presets.append({"id": preset_id, "label": label, "true_class": int(y[row]),
-                        "score": float(scores[row]), "threshold": threshold,
-                        "features": X_test.iloc[row].astype(float).to_dict()})
-    return presets
-
-
-def evaluate_test_set(default_cell: str, rerun_reason: str | None = None,
-                      source: str = "raw") -> dict:
-    """Score every finished cell on the locked test set, once; write test_results.json and
-    presets.json. The ONLY function that reads X_test and y_test.
+def evaluate_test_set(rerun_reason: str | None = None, source: str = "raw") -> dict:
+    """Score every finished cell on the locked test set, once; write test_results.json.
+    The ONLY function that reads X_test and y_test.
 
     Each cell is judged at the F1 threshold it chose on out-of-fold training scores (read from
-    its cell file, never recomputed here). In the same single opening, the default cell's scores
-    pick the 5 example payments for the app.
+    its cell file, never recomputed here).
     """
     cells = load_cells(source)
-    if default_cell not in cells:
-        raise ValueError(f"--default-cell {default_cell} is not a finished cell; "
-                         f"choose one of {sorted(cells)}.")
     open_guard(source, sorted(cells), rerun_reason)
 
     df, _, _ = remove_duplicates(load_data(source))
     _, X_test, _, y_test = split_data(df)
     print(f"test set: {len(y_test):,} rows, {int(y_test.sum())} frauds")
-    results, presets = {}, []
+    results = {}
     for name, cell in cells.items():
         pipeline = joblib.load(artifacts_dir(source) / "models" / f"{name}.joblib")
         scores = pipeline.predict_proba(X_test)[:, 1]
@@ -196,13 +151,9 @@ def evaluate_test_set(default_cell: str, rerun_reason: str | None = None,
         low, high = results[name]["pr_auc_ci"]
         print(f"{name:<28} test PR-AUC {results[name]['test']['pr_auc']:.4f} "
               f"[{low:.3f}, {high:.3f}]")
-        if name == default_cell:
-            presets = pick_presets(X_test, y_test, scores, cell["threshold_f1"])
 
     metrics_dir = artifacts_dir(source) / "metrics"
     (metrics_dir / "test_results.json").write_text(json.dumps(results, indent=2))
-    (metrics_dir / "presets.json").write_text(
-        json.dumps({"default_cell": default_cell, "presets": presets}, indent=2))
     return results
 
 
@@ -248,87 +199,20 @@ def significance_tests(source: str = "raw") -> dict:
     return stats
 
 
-def make_figures(source: str = "raw") -> None:
-    """PR curves per model, test PR-AUC bars with CI whiskers, and the training class counts
-    before and after each technique (log scale). PNGs in artifacts/figures/."""
-    results_file = artifacts_dir(source) / "metrics" / "test_results.json"
-    if not results_file.is_file():
-        raise FileNotFoundError(f"{results_file} not found; run --test first.")
-    results = json.loads(results_file.read_text())
-    cells = load_cells(source)
-    figures_dir = artifacts_dir(source) / "figures"
-    figures_dir.mkdir(parents=True, exist_ok=True)
-    models = [m for m in MODELS if any(r["model"] == m for r in results.values())]
-
-    fig, axes = plt.subplots(1, len(models), figsize=(4 * len(models), 4), squeeze=False)
-    for ax, model in zip(axes[0], models, strict=True):
-        for technique in TECHNIQUES:
-            result = results.get(f"{model}__{technique}")
-            if result:
-                curve = result["pr_curve"]
-                ax.plot(curve["recall"], curve["precision"], label=LABELS[technique])
-        ax.set(title=model, xlabel="Recall", ylabel="Precision", xlim=(0, 1), ylim=(0, 1.02))
-    axes[0][0].legend(fontsize=8)
-    fig.suptitle("Precision-recall curves on the test set")
-    fig.tight_layout()
-    fig.savefig(figures_dir / "pr_curves.png", dpi=150)
-    plt.close(fig)
-
-    fig, ax = plt.subplots(figsize=(9, 4))
-    width = 0.8 / len(TECHNIQUES)
-    for j, technique in enumerate(TECHNIQUES):
-        for i, model in enumerate(models):
-            result = results.get(f"{model}__{technique}")
-            if result:
-                value, (low, high) = result["test"]["pr_auc"], result["pr_auc_ci"]
-                ax.bar(i + (j - 2.5) * width, value, width, color=f"C{j}",
-                       yerr=[[value - low], [high - value]], capsize=2,
-                       label=LABELS[technique] if i == 0 else None)
-    ax.set_xticks(range(len(models)), models)
-    ax.set(ylabel="Test PR-AUC", ylim=(0, 1.05), title="Test PR-AUC with 95% bootstrap CI")
-    ax.legend(fontsize=8, ncol=3)
-    fig.tight_layout()
-    fig.savefig(figures_dir / "pr_auc_ci.png", dpi=150)
-    plt.close(fig)
-
-    fig, axes = plt.subplots(1, len(models), figsize=(4 * len(models), 4), squeeze=False)
-    for ax, model in zip(axes[0], models, strict=True):
-        names = [t for t in TECHNIQUES if f"{model}__{t}" in cells]
-        after = [cells[f"{model}__{t}"]["train_counts_after"] for t in names]
-        before = cells[f"{model}__{names[0]}"]["train_counts_before"]
-        x = np.arange(len(names))
-        ax.bar(x - 0.2, [a["legit"] for a in after], 0.4, label="legit after")
-        ax.bar(x + 0.2, [a["fraud"] for a in after], 0.4, label="fraud after")
-        ax.axhline(before["legit"], color="C0", linestyle="--", label="legit before")
-        ax.axhline(before["fraud"], color="C1", linestyle="--", label="fraud before")
-        ax.set_xticks(x, [LABELS[t] for t in names], rotation=45, ha="right")
-        ax.set(yscale="log", title=model, ylabel="Training rows (log scale)")
-    axes[0][0].legend(fontsize=8)
-    fig.suptitle("Training class counts before and after each technique")
-    fig.tight_layout()
-    fig.savefig(figures_dir / "training_counts.png", dpi=150)
-    plt.close(fig)
-    print(f"figures written to {figures_dir}")
-
-
 def main() -> None:
-    """Run the steps asked for on the command line, in the order test, stats, figures."""
-    parser = argparse.ArgumentParser(description="Test-set evaluation, statistics, figures.")
+    """Run the steps asked for on the command line, in the order test, stats."""
+    parser = argparse.ArgumentParser(description="Test-set evaluation and statistics.")
     parser.add_argument("--source", choices=["raw", "sample"], default="raw")
     parser.add_argument("--test", action="store_true", help="the one-time test-set evaluation")
-    parser.add_argument("--default-cell", help="the team's chosen cell, e.g. lightgbm__smote")
     parser.add_argument("--rerun-reason", help="why the test set must be opened again")
     parser.add_argument("--stats", action="store_true", help="significance tests")
-    parser.add_argument("--figures", action="store_true", help="report figures")
     args = parser.parse_args()
-    if not (args.test or args.stats or args.figures):
-        parser.error("choose at least one of --test, --stats, --figures")
-    if args.test and not args.default_cell:
-        parser.error("--test needs --default-cell <model>__<technique> (the team's choice)")
+    if not (args.test or args.stats):
+        parser.error("choose at least one of --test, --stats")
 
     if args.test:
         try:
-            evaluate_test_set(args.default_cell, args.rerun_reason, args.source)
+            evaluate_test_set(args.rerun_reason, args.source)
         except (FileNotFoundError, ValueError, RuntimeError) as error:
             raise SystemExit(f"error: {error}") from None  # one clear line, no traceback
     if args.stats:
@@ -336,8 +220,6 @@ def main() -> None:
             for test in result["wilcoxon_vs_baseline"]:
                 print(f"{model:<14} {test['technique']:<13} vs baseline: p = {test['p_value']:.3g}"
                       f", Holm p = {test['p_value_holm']:.3g}")
-    if args.figures:
-        make_figures(args.source)
 
 
 if __name__ == "__main__":

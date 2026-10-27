@@ -93,4 +93,4 @@ def test_second_test_run_needs_a_reason(tmp_path: object, monkeypatch: pytest.Mo
     (metrics / "cells" / "logreg__baseline.json").write_text(json.dumps({"model": "logreg"}))
     (metrics / evaluation.GUARD_FILE).write_text(json.dumps({"openings": []}))
     with pytest.raises(RuntimeError, match="rerun-reason"):
-        evaluation.evaluate_test_set("logreg__baseline", source="sample")
+        evaluation.evaluate_test_set(source="sample")

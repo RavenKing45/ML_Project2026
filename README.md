@@ -7,7 +7,7 @@ undersampling, D SMOTE, E SMOTE then random undersampling, F class weighting) on
 (logistic regression, random forest, LightGBM, XGBoost, CatBoost). Every technique gets the same
 tuning budget, all resampling happens inside the training folds only, and the test set is opened
 once at the end.
-The main metric is average precision (PR-AUC). A Streamlit app shows the results.
+The main metric is average precision (PR-AUC). Jupyter notebooks show and explain the results.
 
 **Research question:** how do data-level resampling (random oversampling, random undersampling,
 SMOTE and SMOTE + undersampling) and algorithm-level class weighting compare with an untreated
@@ -22,15 +22,17 @@ model_build/                     our from-scratch SMOTE (a teammate's code and n
 src/fraudstudy/__init__.py       marks fraudstudy as a package
 src/fraudstudy/data.py           load, check, remove duplicates, split 70/30
 src/fraudstudy/experiments.py    preprocessing, the 6 techniques, the 5 models, tuning, cross-validation
-src/fraudstudy/evaluation.py     the one-time test-set evaluation, metrics, confidence intervals, significance tests, figures
+src/fraudstudy/evaluation.py     the one-time test-set evaluation, metrics, confidence intervals, significance tests
 notebooks/01_eda.ipynb           exploration and the EDA figures
-artifacts/figures/               saved figures (eda_*.png from the notebook, the rest from evaluation.py)
+notebooks/02_smote_demo.ipynb    a picture of how our from-scratch SMOTE makes new frauds
+notebooks/03_results.ipynb       every result, read from the saved files: tables, figures, significance tests
+artifacts/figures/               saved figures (all drawn by the notebooks)
 artifacts/metrics/               saved results (eda_summary.json, cells/*.json, test_results.json, stats.json, ...)
-artifacts/models/                trained pipelines (only lightgbm__*.joblib are committed, for the app)
+artifacts/models/                trained pipelines (Git-ignored; step 5 re-creates them)
 artifacts/sample/                results of trial runs on the fake sample (Git-ignored)
 tests/test_no_leakage.py         proves no validation or test row reaches training
 tests/test_smote.py              checks our from-scratch SMOTE against imblearn
-app.py                           the Streamlit presentation app
+tests/test_models.py             checks that every model trains and that class weighting matches the ratios
 requirements.txt                 every library, pinned to an exact version
 pyproject.toml                   makes src/fraudstudy installable and holds the pytest settings
 CLAUDE.md                        rules for coding sessions in this repository
@@ -45,8 +47,7 @@ Run everything from the repository root, in this order.
 # 1. Create a virtual environment and install everything (Python 3.11 or newer)
 python -m venv .venv
 source .venv/bin/activate              # Windows: .venv\Scripts\activate
-pip install -r requirements.txt        # also installs src/fraudstudy and model_build/ (the "-e" lines)
-pip install notebook                   # only if you want to open the notebooks
+pip install -r requirements.txt        # also installs src/fraudstudy, model_build/ and Jupyter
 
 # 2. Download creditcard.csv from https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud,
 #    unzip it and put it at data/raw/creditcard.csv
@@ -62,18 +63,18 @@ jupyter notebook notebooks/01_eda.ipynb
 #    Finished cells are skipped, so you can stop and restart; --force re-runs them.
 python -m fraudstudy.experiments
 
-# 6. The one-time test-set evaluation. The team picks the default cell (the one the app shows
-#    first) from the CV PR-AUC printed in step 5, never from test results.
-python -m fraudstudy.evaluation --test --default-cell <model>__<technique>   # e.g. lightgbm__smote
+# 6. The one-time test-set evaluation: scores every finished cell on the test set, once
+python -m fraudstudy.evaluation --test
 
-# 7. Significance tests and the report figures
-python -m fraudstudy.evaluation --stats --figures
+# 7. Significance tests
+python -m fraudstudy.evaluation --stats
 
-# 8. Tests (they use the fake sample only, under a minute)
+# 8. The results: open notebooks/03_results.ipynb, run Kernel > Restart & Run All, save it and
+#    commit it with its outputs. It draws every table and figure from the saved files.
+jupyter notebook notebooks/03_results.ipynb
+
+# 9. Tests (they use the fake sample only, under a minute)
 pytest -q
-
-# 9. The app
-streamlit run app.py
 ```
 
 Step 6 writes a guard file (`artifacts/metrics/TEST_SET_OPENED.json`). Running `--test` a second
@@ -93,7 +94,7 @@ python -m fraudstudy.experiments --models catboost        # laptop 5
 
 Use the same code version and `requirements.txt` on every laptop (and either all or none with
 `--quick`). Then copy each laptop's `artifacts/metrics/cells/*.json` and `artifacts/models/*.joblib`
-into the same folders on one machine and run steps 6 and 7 there. The splits and folds come only
+into the same folders on one machine and run steps 6 to 8 there. The splits and folds come only
 from the seed, so the cells line up fold by fold.
 
 ### Trial run without the real data
@@ -105,38 +106,17 @@ to step 5 for a 2-minute run.
 
 ```bash
 python -m fraudstudy.data --source sample
-# notebook: set SOURCE = "sample" in its first code cell, then run all cells
+# notebook 01: set SOURCE = "sample" in its first code cell, then run all cells
 python -m fraudstudy.experiments --source sample --quick
-python -m fraudstudy.evaluation --source sample --test --default-cell lightgbm__baseline
-python -m fraudstudy.evaluation --source sample --stats --figures
+python -m fraudstudy.evaluation --source sample --test --stats   # a second time: add --rerun-reason "trial"
+# notebook 03: set SOURCE = "sample", run all cells, then set SOURCE back to "raw" and clear
+# every output before saving (sample numbers are never committed)
 pytest -q
 ```
 
 **About `data/sample/`:** `creditcard_synthetic.csv` is fake data with the same 31 columns as the
 real file (6,000 rows, 1.5% fraud). It was made by an earlier version of our code, so that the
 tests and trial runs work without the real dataset. Its numbers mean nothing; never report them.
-
-## Deploy
-
-Live app: <!-- paste the share.streamlit.io link here after deploying -->
-
-The app only reads committed files (`artifacts/metrics/*.json`, `artifacts/figures/*.png` and
-`artifacts/models/lightgbm__*.joblib`), so it runs online without the dataset. Deploy only after
-the real results are committed; otherwise the app shows "No results".
-
-1. Go to https://share.streamlit.io and sign in with GitHub.
-2. Click **Create app** and choose to deploy from a GitHub repository.
-3. Repository `RavenKing45/ML_Project2026`, branch `shaurya`, main file path `app.py`.
-4. Under **Advanced settings**, choose Python **3.11**.
-5. Click **Deploy**. The first build installs `requirements.txt` and takes a few minutes.
-
-- Whoever deploys needs access to the repository from their own GitHub account (and must let
-  Streamlit read it if the repository is private).
-- Keep the two `-e` lines in `requirements.txt`: `data.py` finds `artifacts/` relative to its own
-  file, which only works when the package is installed from the repository folder.
-- A free app goes to sleep when nobody uses it. Open the link about 5 minutes before the demo
-  and click the wake-up button if it shows one.
-- Fallback if the online app fails: on a laptop with the repository, run `streamlit run app.py`.
 
 ## Design decisions
 
@@ -158,13 +138,15 @@ the real results are committed; otherwise the app shows "No results".
 | PR-AUC 95% confidence intervals by stratified bootstrap (1,000 resamples) | Shows how uncertain a test score is with only about 140 test frauds |
 | Settings live in a SETTINGS block at the top of each file, not in YAML configs | One place per job that everyone can read; the YAML loading was a layer nobody needed |
 | All research code in three files: `data.py`, `experiments.py`, `evaluation.py` | Each step is one `python -m fraudstudy.<file>` command and every member can explain every line |
-| One Streamlit app (`app.py`) instead of a FastAPI backend and a React dashboard | One small Python file is enough to present saved results; no API contracts to maintain |
+| Notebooks instead of an app | Code, output and explanation sit in one place, and GitHub shows them without running anything |
+| The headline cell is the best CV PR-AUC | It is chosen from training-only scores, without the test set |
+| Figures are drawn in notebook 03, not in `evaluation.py` | Each figure sits next to its code and its explanation; `evaluation.py` keeps only the numbers |
 | `statsmodels` added | Its `multipletests` does the Holm correction, instead of our own code |
 | `xgboost` added | XGBoost, the most widely used boosted-tree library, as a fourth model |
 | `catboost` added | CatBoost, a boosted-tree library with ordered boosting and symmetric trees, as a fifth model |
-| `streamlit` added | Runs the presentation app |
-| One `requirements.txt` with exact versions, including pytest and the two `-e` installs | Everyone gets the same versions with one command; Jupyter is installed separately because only notebook users need it |
-| Only the LightGBM pipelines are committed (`artifacts/models/lightgbm__*.joblib`) | The app needs them and each is about 2.4 MB; the other models stay local |
+| `notebook` added | Runs the three Jupyter notebooks |
+| One `requirements.txt` with exact versions, including pytest, Jupyter and the two `-e` installs | Everyone gets the same versions with one command |
+| No model files in Git | The largest is 24 MB and step 5 re-creates them; the results are committed as JSON |
 | The EDA is a notebook (`notebooks/01_eda.ipynb`) committed with its outputs | GitHub shows the plots, and each step is explained next to its code |
 | Cut: probability calibration (isotonic calibrators) | Only the old backend used them; PR-AUC and the F1 threshold do not depend on calibration |
 | Cut: the F2 threshold (F2 is still reported at the F1 threshold) | One tuned threshold per cell is enough |
@@ -172,13 +154,14 @@ the real results are committed; otherwise the app shows "No results".
 | Cut: the Nemenyi critical difference, CD diagrams, the pooled Friedman test and `findings.md` | Wilcoxon with Holm plus one Friedman test per model answer the question |
 | Cut: the export manifest, the deploy folder and every SHA-256 check | They protected the FastAPI deployment; the split is fixed by the seed |
 | Cut: batch CSV scoring and the demo batch | Only the FastAPI backend served them |
-| Cut: `backend/` (FastAPI), `frontend/` (React), the JSON contracts and pyyaml, pydantic, fastapi, uvicorn, slowapi, python-multipart | The Streamlit app replaces them |
+| Cut: `backend/` (FastAPI), `frontend/` (React), the JSON contracts and pyyaml, pydantic, fastapi, uvicorn, slowapi, python-multipart | The saved JSON results and the notebooks replace them |
 | Cut: `scripts/`, the resampling-audit and baseline scripts, `artifacts/results/` and `artifacts/demo/` | Each step is now `python -m fraudstudy.<file>`; the training counts before and after resampling are saved in each cell file |
 | Cut: the synthetic-data generator; `data/sample/` is kept as it is | The sample only needs to exist, not to be regenerated |
 | Cut: ROC-AUC confidence interval, MCC, metrics at threshold 0.5 and the confusion-matrix, ROC, threshold-effect and fold-boxplot figures | The report needs PR-AUC with its CI, metrics at the tuned threshold, PR curves and the training counts |
 | Cut: the optional hour-of-day feature | Never part of the main experiment, and it assumed Time = 0 is midnight |
 | Cut: `eda.py` and `run_eda.py` | Replaced by the EDA notebook |
 | Cut: `requirements-dev.txt`, `requirements-notebook.txt`, ruff and its settings | One requirements file is simpler; the linter only ran in the CI, which is cut too |
+| Cut: the Streamlit app (`app.py`), its five pages, `presets.json` and `--default-cell` | The notebooks show the results; the example payments and the default cell only fed the app |
 | Cut: `.github/` (CI), `.gitattributes`, `docs/` and the empty `.gitkeep` files | The tests run locally with `pytest -q`; the decisions are in this table and the master guide lives in the team document |
 
 ## Where to find things
@@ -186,7 +169,7 @@ the real results are committed; otherwise the app shows "No results".
 Questions an examiner may ask, and where the answer is in the code. Line numbers are for the
 commit that added this table; update them whenever one of these files changes.
 `data.py`, `experiments.py` and `evaluation.py` are in `src/fraudstudy/`; `sampler.py` is in
-`model_build/src/smote_from_scratch/`.
+`model_build/src/smote_from_scratch/`; the notebooks are in `notebooks/`.
 
 | Question | File | Function | Lines |
 |---|---|---|---|
@@ -198,7 +181,8 @@ commit that added this table; update them whenever one of these files changes.
 | Where is the preprocessing (imputer, log1p, RobustScaler), and why is it inside the pipeline? | `experiments.py` | `build_preprocessor()` | 76-94 (docstring 77-81 says why) |
 | Where does SMOTE run in the experiment? | `experiments.py` | `build_pipeline()` | 106-123 (SMOTE made at 113, placed at 118-119 between preprocess and model); it runs only inside `Pipeline.fit`, called by `search.fit` in `run_cell()` at 197 |
 | Where is our from-scratch SMOTE? | `sampler.py` | `SMOTE.fit_resample()`, `SMOTE._find_k_neighbors()` | 49-148 and 29-47; the interpolation `x_new = x_i + gap * (x_nn - x_i)` is at 133-135 |
-| How is the from-scratch SMOTE checked, and where is it used? | `tests/test_smote.py`, `app.py` | `test_scratch_smote_*`, `page_smote()` | tests 22-42 and 45-59 (neighbours checked with scikit-learn's `NearestNeighbors`); app 131 |
+| How is the from-scratch SMOTE checked? | `tests/test_smote.py` | `test_scratch_smote_*` | tests 22-42 and 45-59 (neighbours checked with scikit-learn's `NearestNeighbors`) |
+| How does SMOTE make a new fraud? | `02_smote_demo.ipynb` | sections 1-3 | the picture of new frauds on the lines between real frauds, and one new point worked out by hand |
 | How do we prove a sampler only sees training rows? | `tests/test_no_leakage.py` | `SpySampler`, `test_sampler_sees_only_the_training_part_of_each_fold()` | 22-33, 50-59 |
 | How do we prove predicting never resamples? | `tests/test_no_leakage.py` | `test_predicting_never_calls_the_sampler()` | 62-68 |
 | How do we prove the scaler learns from training rows only? | `tests/test_no_leakage.py` | `test_scaler_ignores_extreme_test_values()` | 71-78 |
@@ -215,12 +199,12 @@ commit that added this table; update them whenever one of these files changes.
 | How does the bootstrap confidence interval work? | `evaluation.py` | `bootstrap_ci()` | 72-93: redraw frauds and legit rows separately (87-90), PR-AUC of each resample (91), 2.5% and 97.5% quantiles (92); `N_BOOTSTRAP` at 41 |
 | Where are the Wilcoxon, Holm and Friedman tests? | `evaluation.py` | `significance_tests()` | 209-248: Wilcoxon 233, Holm 236, Friedman 242 |
 | Where are the training class counts before and after resampling recorded? | `experiments.py` | `counts_after_resampling()`, `run_cell()` | 171-182; saved at 215-216 |
-| How does the app explain a prediction? | `app.py` | `page_try()` | 212-250: only the preprocess step runs (241), LightGBM's `pred_contrib=True` gives each feature's push in log-odds (242), the 6 largest are drawn (243-249) |
-| Where do the app's example payments come from? | `evaluation.py` | `pick_presets()` | 128-160; called at 200, inside the single test-set opening |
-| Which results does the app read? | `app.py` | (module level) | 285-296: the real `artifacts/metrics/`, or `artifacts/sample/` with `--sample` or when the real results are missing |
+| Where are the result tables and figures made? | `03_results.ipynb` | sections 3-5 | CV table (3), test table (4), PR curves and PR-AUC bars with CI (5); the training-count figure is section 2 |
+| How is the headline cell chosen? | `03_results.ipynb` | section 3 | the cell with the highest CV PR-AUC, from training rows only |
+| Where are the significance results shown? | `03_results.ipynb` | section 7 | Wilcoxon vs baseline with Holm p-values, and the Friedman p, per model |
 
 We spot-checked 10 of these line numbers against the code when writing the table: `data.py` 62,
-`experiments.py` 113, 146, 197, 201, 214, `evaluation.py` 115, 233, 236 and `app.py` 242.
+`experiments.py` 113, 146, 197, 201, 214 and `evaluation.py` 115, 233, 236.
 
 ## Results
 

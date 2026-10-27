@@ -5,10 +5,9 @@ data/raw/*
 # Outputs of trial runs on the fake sample
 artifacts/sample/
 
-# Trained pipelines stay local, except the LightGBM ones the app loads (each about 2.4 MB)
+# Trained pipelines stay local (the largest is 24 MB); the experiment re-creates them
 artifacts/models/*
 !artifacts/models/.gitkeep
-!artifacts/models/lightgbm__*.joblib
 
 # Python, pip install -e and Jupyter leftovers
 .venv/
