@@ -97,6 +97,8 @@ class SMOTE:
 
         # Generate enough samples to match the majority-class count.
         n_to_generate = int(counts.max() - counts.min())
+        # (parent_index, neighbour_index, gap) of every synthetic sample, in X_minority's order.
+        self.steps_ = []
 
         # If already balanced, return copies of the original arrays.
         if n_to_generate == 0:
@@ -133,6 +135,7 @@ class SMOTE:
             x_new = x_i + gap * (x_nn - x_i)
 
             synthetic_samples.append(x_new)
+            self.steps_.append((int(base_index), int(neighbor_index), float(gap)))
 
         # Convert synthetic samples into arrays.
         X_synthetic = np.asarray(synthetic_samples, dtype=float)

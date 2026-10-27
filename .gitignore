@@ -1,18 +1,23 @@
-# Python
-__pycache__/
-*.py[cod]
+# The real dataset is never committed (download it from Kaggle); the .gitkeep keeps the folder.
+data/raw/*
+!data/raw/.gitkeep
+
+# Outputs of trial runs on the fake sample
+artifacts/sample/
+
+# Trained pipelines stay local (the largest is 24 MB); the experiment re-creates them
+artifacts/models/*
+!artifacts/models/.gitkeep
+
+# Python, pip install -e and Jupyter leftovers
 .venv/
-venv/
-
-# Data
-data/raw/
-data/processed/
-
-# Generated model files
-*.joblib
-*.pkl
-
-# Jupyter
-.ipynb_checkpoints/
-
+__pycache__/
 *.egg-info/
+.ipynb_checkpoints/
+.pytest_cache/
+
+# Secrets
+.env
+
+# CatBoost writes a training log folder unless told not to
+catboost_info/

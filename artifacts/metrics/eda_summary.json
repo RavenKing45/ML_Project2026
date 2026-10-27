@@ -1,0 +1,8 @@
+{
+  "rows": 284807,
+  "frauds": 492,
+  "fraud_rate": 0.001727485630620034,
+  "duplicates_removed": 1081,
+  "train_rows": 198608,
+  "test_rows": 85118
+}

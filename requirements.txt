@@ -1,11 +1,15 @@
-# Core dependency of the SMOTE implementation
-numpy>=1.17
-
-# Reference implementation used for comparison in SMOTE_algo.ipynb
-imbalanced-learn
-
-# To run the notebook
-jupyter
-
-# Installs the smote_from_scratch package itself (run pip from the repo root)
+numpy==2.4.6
+pandas==3.1.0
+scikit-learn==1.9.1
+imbalanced-learn==0.14.2
+lightgbm==4.7.0
+xgboost==3.2.0
+catboost==1.2.10
+scipy==1.17.1
+statsmodels==0.15.0
+matplotlib==3.11.2
+joblib==1.6.0
+notebook==7.6.3
+pytest==9.1.1
+-e .
 -e ./model_build

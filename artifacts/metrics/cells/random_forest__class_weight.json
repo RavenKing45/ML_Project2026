@@ -1,0 +1,46 @@
+{
+  "model": "random_forest",
+  "technique": "class_weight",
+  "quick": false,
+  "best_params": {
+    "model__n_estimators": 200,
+    "model__min_samples_leaf": 1,
+    "model__max_samples": 0.5,
+    "model__max_features": "sqrt",
+    "model__max_depth": 12,
+    "model__class_weight": {
+      "0": 1.0,
+      "1": 29.951208459214502
+    }
+  },
+  "cv_pr_auc_mean": 0.846751282865126,
+  "cv_pr_auc_std": 0.029720151641814865,
+  "fold_pr_auc": [
+    0.8279743637989415,
+    0.8626394957019994,
+    0.8124925861426077,
+    0.8746389706282384,
+    0.8703566268544376,
+    0.8027851520352632,
+    0.8556996065539145,
+    0.8810709605608814,
+    0.8219515352062977,
+    0.8780034828956087,
+    0.8734610347397629,
+    0.7946782391567057,
+    0.8189070367126344,
+    0.8806929695392676,
+    0.8459171824503271
+  ],
+  "threshold_f1": 0.5144410537124728,
+  "train_counts_before": {
+    "legit": 198277,
+    "fraud": 331
+  },
+  "train_counts_after": {
+    "legit": 198277,
+    "fraud": 331
+  },
+  "fit_seconds": 7.904590845108032,
+  "n_iter": 20
+}

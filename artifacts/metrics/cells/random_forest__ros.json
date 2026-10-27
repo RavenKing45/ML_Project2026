@@ -1,0 +1,43 @@
+{
+  "model": "random_forest",
+  "technique": "ros",
+  "quick": false,
+  "best_params": {
+    "ros__sampling_strategy": 0.01,
+    "model__n_estimators": 200,
+    "model__min_samples_leaf": 1,
+    "model__max_samples": 0.5,
+    "model__max_features": 0.5,
+    "model__max_depth": 16
+  },
+  "cv_pr_auc_mean": 0.8459690554277169,
+  "cv_pr_auc_std": 0.03260998628388219,
+  "fold_pr_auc": [
+    0.8078924977074147,
+    0.8678376223955017,
+    0.8214397578408593,
+    0.8728768665929219,
+    0.858036688073418,
+    0.7883561828181163,
+    0.8514414544147731,
+    0.8936274740541822,
+    0.8251289885540362,
+    0.8826572344814588,
+    0.8869250507558105,
+    0.8064789617651246,
+    0.8075512306068077,
+    0.8653077225402978,
+    0.8539780988150308
+  ],
+  "threshold_f1": 0.665,
+  "train_counts_before": {
+    "legit": 198277,
+    "fraud": 331
+  },
+  "train_counts_after": {
+    "legit": 198277,
+    "fraud": 1982
+  },
+  "fit_seconds": 25.619418621063232,
+  "n_iter": 20
+}
