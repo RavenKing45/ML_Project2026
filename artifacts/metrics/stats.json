@@ -58,6 +58,62 @@
         "p_value": 0.022502443866208144
       }
     },
+    "random_forest": {
+      "wilcoxon_vs_baseline": [
+        {
+          "technique": "ros",
+          "median_difference": -0.0014999878412038647,
+          "statistic": 44.0,
+          "p_value": 0.389404296875,
+          "p_value_holm": 0.77880859375,
+          "significant": false
+        },
+        {
+          "technique": "rus",
+          "median_difference": -0.02717210132315706,
+          "statistic": 0.0,
+          "p_value": 6.103515625e-05,
+          "p_value_holm": 0.00030517578125,
+          "significant": true
+        },
+        {
+          "technique": "smote",
+          "median_difference": 0.0048573713727388945,
+          "statistic": 21.0,
+          "p_value": 0.02557373046875,
+          "p_value_holm": 0.102294921875,
+          "significant": false
+        },
+        {
+          "technique": "smote_rus",
+          "median_difference": -0.0027418693715069997,
+          "statistic": 39.0,
+          "p_value": 0.25238037109375,
+          "p_value_holm": 0.75714111328125,
+          "significant": false
+        },
+        {
+          "technique": "class_weight",
+          "median_difference": 4.28797631270017e-05,
+          "statistic": 59.0,
+          "p_value": 0.97796630859375,
+          "p_value_holm": 0.97796630859375,
+          "significant": false
+        }
+      ],
+      "friedman": {
+        "techniques": [
+          "baseline",
+          "ros",
+          "rus",
+          "smote",
+          "smote_rus",
+          "class_weight"
+        ],
+        "statistic": 38.961904761904805,
+        "p_value": 2.4171362649332346e-07
+      }
+    },
     "lightgbm": {
       "wilcoxon_vs_baseline": [
         {

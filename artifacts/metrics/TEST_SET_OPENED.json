@@ -17,6 +17,30 @@
         "logreg__smote",
         "logreg__smote_rus"
       ]
+    },
+    {
+      "date": "2026-10-28",
+      "reason": "The opening on 27 Oct covered only 12 of the 18 cells (logreg and LightGBM) and was run early by mistake; no setting was changed after it. This opening scores all 18 cells of logreg, random forest and LightGBM.",
+      "cells": [
+        "lightgbm__baseline",
+        "lightgbm__class_weight",
+        "lightgbm__ros",
+        "lightgbm__rus",
+        "lightgbm__smote",
+        "lightgbm__smote_rus",
+        "logreg__baseline",
+        "logreg__class_weight",
+        "logreg__ros",
+        "logreg__rus",
+        "logreg__smote",
+        "logreg__smote_rus",
+        "random_forest__baseline",
+        "random_forest__class_weight",
+        "random_forest__ros",
+        "random_forest__rus",
+        "random_forest__smote",
+        "random_forest__smote_rus"
+      ]
     }
   ]
 }

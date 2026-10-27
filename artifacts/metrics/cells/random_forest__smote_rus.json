@@ -1,0 +1,44 @@
+{
+  "model": "random_forest",
+  "technique": "smote_rus",
+  "quick": false,
+  "best_params": {
+    "smote__sampling_strategy": 0.05,
+    "rus__sampling_strategy": 0.1,
+    "model__n_estimators": 200,
+    "model__min_samples_leaf": 5,
+    "model__max_samples": null,
+    "model__max_features": 0.5,
+    "model__max_depth": null
+  },
+  "cv_pr_auc_mean": 0.8405527331911553,
+  "cv_pr_auc_std": 0.032745546072118666,
+  "fold_pr_auc": [
+    0.8238098586962356,
+    0.8734723274113306,
+    0.8232316441011839,
+    0.8764995731219775,
+    0.8451500827531929,
+    0.7834045007648647,
+    0.8365338187188671,
+    0.866026069860778,
+    0.8254835715372615,
+    0.87338654862269,
+    0.86587608808164,
+    0.7768672236861688,
+    0.8048190724141783,
+    0.8828636043721119,
+    0.8508670137248505
+  ],
+  "threshold_f1": 0.6990319264069262,
+  "train_counts_before": {
+    "legit": 198277,
+    "fraud": 331
+  },
+  "train_counts_after": {
+    "legit": 99130,
+    "fraud": 9913
+  },
+  "fit_seconds": 27.215914726257324,
+  "n_iter": 20
+}

@@ -1,0 +1,42 @@
+{
+  "model": "random_forest",
+  "technique": "baseline",
+  "quick": false,
+  "best_params": {
+    "model__n_estimators": 200,
+    "model__min_samples_leaf": 1,
+    "model__max_samples": null,
+    "model__max_features": 0.5,
+    "model__max_depth": 16
+  },
+  "cv_pr_auc_mean": 0.8470764658838832,
+  "cv_pr_auc_std": 0.03467206568982967,
+  "fold_pr_auc": [
+    0.8067551796498267,
+    0.8759431002264767,
+    0.8236547803389219,
+    0.8675197414142322,
+    0.8646048869628751,
+    0.7884200562159753,
+    0.852941442255977,
+    0.9017635108943918,
+    0.8282254409087685,
+    0.8835724352377206,
+    0.8958611122692132,
+    0.8122807328593091,
+    0.7983250764136698,
+    0.8604051899236884,
+    0.8458743026872001
+  ],
+  "threshold_f1": 0.47024741009257426,
+  "train_counts_before": {
+    "legit": 198277,
+    "fraud": 331
+  },
+  "train_counts_after": {
+    "legit": 198277,
+    "fraud": 331
+  },
+  "fit_seconds": 74.6313807964325,
+  "n_iter": 20
+}
