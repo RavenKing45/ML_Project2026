@@ -1,0 +1,22 @@
+{
+  "openings": [
+    {
+      "date": "2026-10-27",
+      "reason": null,
+      "cells": [
+        "lightgbm__baseline",
+        "lightgbm__class_weight",
+        "lightgbm__ros",
+        "lightgbm__rus",
+        "lightgbm__smote",
+        "lightgbm__smote_rus",
+        "logreg__baseline",
+        "logreg__class_weight",
+        "logreg__ros",
+        "logreg__rus",
+        "logreg__smote",
+        "logreg__smote_rus"
+      ]
+    }
+  ]
+}

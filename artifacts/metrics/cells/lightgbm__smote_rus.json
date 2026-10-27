@@ -1,0 +1,46 @@
+{
+  "model": "lightgbm",
+  "technique": "smote_rus",
+  "quick": false,
+  "best_params": {
+    "smote__sampling_strategy": 0.05,
+    "rus__sampling_strategy": 0.1,
+    "model__subsample_freq": 1,
+    "model__subsample": 1.0,
+    "model__num_leaves": 63,
+    "model__n_estimators": 400,
+    "model__min_child_samples": 20,
+    "model__learning_rate": 0.03,
+    "model__colsample_bytree": 1.0
+  },
+  "cv_pr_auc_mean": 0.8566105516732355,
+  "cv_pr_auc_std": 0.033732979569118714,
+  "fold_pr_auc": [
+    0.8378876091348187,
+    0.8961677461852061,
+    0.8152166740807213,
+    0.8966653752842941,
+    0.8701237856717335,
+    0.805781348480048,
+    0.8711429279034989,
+    0.89894592617903,
+    0.8189908135277734,
+    0.8787372110126617,
+    0.8866475487521,
+    0.8046612264196135,
+    0.8373967978607724,
+    0.8881618648101999,
+    0.8426314197960623
+  ],
+  "threshold_f1": 0.9882228850485039,
+  "train_counts_before": {
+    "legit": 198277,
+    "fraud": 331
+  },
+  "train_counts_after": {
+    "legit": 99130,
+    "fraud": 9913
+  },
+  "fit_seconds": 5.590304851531982,
+  "n_iter": 20
+}
