@@ -249,6 +249,14 @@ Filled in after the test-set evaluation on the real data.
 
 Every table, figure and significance test is in [`notebooks/03_results.ipynb`](notebooks/03_results.ipynb).
 
+LightGBM with class weighting (F) is the odd row. The search chose a fraud weight of 299.5
+(r = 0.5), and its F1 threshold is exactly 1.000. A score cannot be higher than 1, so at that
+threshold only payments scored exactly 1.0 are flagged: 808 test payments (110 frauds and 698 legit
+payments) share that top score, so the model cannot rank them against each other. PR-AUC gives the
+tied group one precision (0.136) for its recall (0.775), which alone is 0.105 of the 0.110 test
+PR-AUC. Its CV fold PR-AUCs also range from 0.289 to 0.798 (standard deviation 0.136; at most 0.044
+for the other 17 cells).
+
 The test set was opened twice: once on 27 Oct for 12 of the 18 cells (run early by mistake), and
 once for all 18. Nothing was changed between the two, and the results here come from the second
 opening (both are logged in `artifacts/metrics/TEST_SET_OPENED.json`).
