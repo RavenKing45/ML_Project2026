@@ -1,4 +1,4 @@
-# AGENTS.md — rules for every coding session in this repository
+# Rules for every coding session in this repository
 
 ## The project
 "An Empirical Study of Class-Imbalance Handling Techniques for Credit Card Fraud Detection",
@@ -29,7 +29,7 @@ artifacts/sample/                output of runs on the fake sample (Git-ignored)
 tests/test_no_leakage.py, tests/test_smote.py, tests/test_models.py
 README.md                        front page: how to run, design decisions, results
 requirements.txt                 every library pinned, plus -e . and -e ./model_build
-pyproject.toml, CLAUDE.md, .gitignore, LICENSE
+pyproject.toml, .gitignore, LICENSE, and two copies of this file (one per coding assistant)
 
 ## Before you change anything
 1. Read README.md, this file and every file you will touch.
@@ -77,8 +77,8 @@ Our examiner opens any file and asks any of us to explain any line. So:
 - Do not push until the team member says the step passed review.
 - Before the first commit, run git config user.name and git config user.email and check they
   are the team member's own. If not, stop and ask.
-- Commits are written as that team member. Never add Co-Authored-By, Codex-Session or
-  "Generated with" lines, and never use Claude as the author.
+- Commits are written as that team member. Never add Co-Authored-By, AI-session or
+  "Generated with" lines, and never use an AI assistant as the author.
 - Never commit data/raw/, .env files, model files (.joblib), or any file over 10 MB.
 
 ## When you finish
