@@ -4,29 +4,37 @@
 "An Empirical Study of Class-Imbalance Handling Techniques for Credit Card Fraud Detection",
 a student group project. We compare 6 ways of handling class imbalance (A baseline,
 B RandomOverSampler, C RandomUnderSampler, D SMOTE, E SMOTE then RandomUnderSampler,
-F class weighting) on 3 models (logistic regression, random forest, LightGBM) using the ULB
-credit-card dataset, without data leakage, and show the results in one Streamlit app.
+F class weighting) on 5 models (logistic regression, random forest, LightGBM, XGBoost,
+CatBoost) using the ULB credit-card dataset, without data leakage. Python scripts compute the
+results; Jupyter notebooks show and explain them. There is no app, website or server.
 
 ## Where things are (the final layout: do not add folders or files unless the task says so)
 data/raw/creditcard.csv          the real dataset (Git-ignored; download from Kaggle)
-data/sample/creditcard_synthetic.csv   small fake copy with the same columns, for tests and quick runs
-model_build/                     our from-scratch SMOTE (a teammate's code: change only when asked)
+data/sample/creditcard_synthetic.csv   small fake copy with the same columns, for tests and trial runs
+model_build/                     our from-scratch SMOTE and its notebook (a teammate's code:
+                                 change only when asked)
 src/fraudstudy/__init__.py       marks fraudstudy as a package
 src/fraudstudy/data.py           load, check, remove duplicates, split 70/30
-src/fraudstudy/experiments.py    preprocessing, the 6 techniques, the 3 models, tuning, cross-validation
+src/fraudstudy/experiments.py    preprocessing, the 6 techniques, the 5 models, tuning, cross-validation
 src/fraudstudy/evaluation.py     the one-time test-set evaluation, metrics, confidence intervals,
-                                 significance tests, figures
+                                 significance tests
 notebooks/01_eda.ipynb           exploration; writes artifacts/figures/eda_*.png and
                                  artifacts/metrics/eda_summary.json
-artifacts/figures/               saved figures
-artifacts/metrics/               saved results (cells/*.json, test_results.json, stats.json, ...)
-artifacts/models/                trained pipelines; only lightgbm__*.joblib are committed (each under 10 MB)
+notebooks/02_smote_demo.ipynb    a picture of how our from-scratch SMOTE makes new frauds
+notebooks/03_results.ipynb       reads the saved results: tables, figures, significance tests
+artifacts/figures/               saved figures (written by the notebooks)
+artifacts/metrics/               saved results (cells/*.json, test_results.json, stats.json, eda_summary.json)
+artifacts/models/                trained pipelines (Git-ignored; the experiment re-creates them)
 artifacts/sample/                output of runs on the fake sample (Git-ignored)
-tests/test_no_leakage.py, tests/test_smote.py
-app.py                           the Streamlit presentation app
+tests/test_no_leakage.py, tests/test_smote.py, tests/test_models.py
 README.md                        front page: how to run, design decisions, results
 requirements.txt                 every library pinned, plus -e . and -e ./model_build
 pyproject.toml, CLAUDE.md, .gitignore, LICENSE
+
+## Before you change anything
+1. Read README.md, this file and every file you will touch.
+2. Restate the task in 3-5 bullets and list the files you will create, change or delete.
+3. If the task conflicts with this file or with a scientific rule below, STOP and ask.
 
 ## Simple enough to explain (the rule above all the others)
 Our examiner opens any file and asks any of us to explain any line. So:
@@ -44,6 +52,10 @@ Our examiner opens any file and asks any of us to explain any line. So:
 9. Use the library instead of writing your own (scikit-learn, imblearn, scipy, statsmodels,
    pandas, matplotlib). The only exception is the teaching SMOTE in model_build/.
 10. No new dependency without a one-line reason in the README's "Design decisions" table.
+11. Notebooks only READ saved results and import from src/fraudstudy; they never run the
+    experiment or open the test set, and src never imports a notebook. Every code cell has a
+    markdown cell above it saying what it shows and how to read it. Notebooks run top to bottom
+    (Restart & Run All) and are committed with their outputs, never with fake-sample outputs.
 
 ## Scientific rules (never break these)
 - Never apply any resampler outside an imblearn.pipeline.Pipeline, and never before the
@@ -56,6 +68,8 @@ Our examiner opens any file and asks any of us to explain any line. So:
 - Primary metric: average precision (PR-AUC). Never optimise or select on accuracy.
 - Every technique gets the same ratio grid and the same tuning budget (SETTINGS in
   experiments.py).
+- Never change a library pin or a setting that finished cells depend on: the saved results
+  would no longer match the code.
 
 ## Git
 - Work directly on branch shaurya. Commit locally; push only with: git push origin shaurya.
@@ -65,7 +79,7 @@ Our examiner opens any file and asks any of us to explain any line. So:
   are the team member's own. If not, stop and ask.
 - Commits are written as that team member. Never add Co-Authored-By, Claude-Session or
   "Generated with" lines, and never use Claude as the author.
-- Never commit data/raw/, .env files, or any file over 10 MB.
+- Never commit data/raw/, .env files, model files (.joblib), or any file over 10 MB.
 
 ## When you finish
 1. Run pytest -q (under 60 s). Fix any failure you caused.
