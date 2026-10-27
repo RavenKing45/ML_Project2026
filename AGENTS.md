@@ -10,9 +10,11 @@ results; Jupyter notebooks show and explain them. There is no app, website or se
 
 ## Where things are (the final layout: do not add folders or files unless the task says so)
 data/raw/creditcard.csv          the real dataset (Git-ignored; download from Kaggle)
+data/raw/.gitkeep                keeps the otherwise empty data/raw/ folder in Git
 data/sample/creditcard_synthetic.csv   small fake copy with the same columns, for tests and trial runs
 model_build/                     our from-scratch SMOTE and its notebook (a teammate's code:
-                                 change only when asked)
+                                 change only when asked): pyproject.toml and
+                                 src/smote_from_scratch/__init__.py, sampler.py, SMOTE_algo.ipynb
 src/fraudstudy/__init__.py       marks fraudstudy as a package
 src/fraudstudy/data.py           load, check, remove duplicates, split 70/30
 src/fraudstudy/experiments.py    preprocessing, the 6 techniques, the 5 models, tuning, cross-validation
@@ -23,8 +25,10 @@ notebooks/01_eda.ipynb           exploration; writes artifacts/figures/eda_*.png
 notebooks/02_smote_demo.ipynb    a picture of how our from-scratch SMOTE makes new frauds
 notebooks/03_results.ipynb       reads the saved results: tables, figures, significance tests
 artifacts/figures/               saved figures (written by the notebooks)
-artifacts/metrics/               saved results (cells/*.json, test_results.json, stats.json, eda_summary.json)
+artifacts/metrics/               saved results (cells/*.json, test_results.json, stats.json, eda_summary.json,
+                                 TEST_SET_OPENED.json)
 artifacts/models/                trained pipelines (Git-ignored; the experiment re-creates them)
+artifacts/models/.gitkeep        keeps the otherwise empty artifacts/models/ folder in Git
 artifacts/sample/                output of runs on the fake sample (Git-ignored)
 tests/test_no_leakage.py, tests/test_smote.py, tests/test_models.py
 README.md                        front page: how to run, design decisions, results

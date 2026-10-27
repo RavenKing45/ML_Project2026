@@ -17,8 +17,13 @@ baseline for detecting fraud in highly imbalanced credit-card data?
 
 ```text
 data/raw/creditcard.csv          the real dataset (Git-ignored; download it from Kaggle)
-data/sample/                     small fake copy with the same columns, for tests and trial runs
-model_build/                     our from-scratch SMOTE (a teammate's code and notebook)
+data/raw/.gitkeep                keeps the otherwise empty data/raw/ folder in Git
+data/sample/creditcard_synthetic.csv   small fake copy with the same columns, for tests and trial runs
+model_build/                     our from-scratch SMOTE (a teammate's code and notebook):
+model_build/pyproject.toml         makes it installable (pip install -e ./model_build)
+model_build/src/smote_from_scratch/__init__.py     marks smote_from_scratch as a package
+model_build/src/smote_from_scratch/sampler.py      the from-scratch SMOTE class
+model_build/src/smote_from_scratch/SMOTE_algo.ipynb   the teammate's notebook about it
 src/fraudstudy/__init__.py       marks fraudstudy as a package
 src/fraudstudy/data.py           load, check, remove duplicates, split 70/30
 src/fraudstudy/experiments.py    preprocessing, the 6 techniques, the 5 models, tuning, cross-validation
@@ -27,16 +32,19 @@ notebooks/01_eda.ipynb           exploration and the EDA figures
 notebooks/02_smote_demo.ipynb    a picture of how our from-scratch SMOTE makes new frauds
 notebooks/03_results.ipynb       every result, read from the saved files: tables, figures, significance tests
 artifacts/figures/               saved figures (all drawn by the notebooks)
-artifacts/metrics/               saved results (eda_summary.json, cells/*.json, test_results.json, stats.json, ...)
+artifacts/metrics/               saved results (eda_summary.json, cells/*.json, test_results.json, stats.json, TEST_SET_OPENED.json)
 artifacts/models/                trained pipelines (Git-ignored; step 5 re-creates them)
+artifacts/models/.gitkeep        keeps the otherwise empty artifacts/models/ folder in Git
 artifacts/sample/                results of trial runs on the fake sample (Git-ignored)
 tests/test_no_leakage.py         proves no validation or test row reaches training
 tests/test_smote.py              checks our from-scratch SMOTE against imblearn
 tests/test_models.py             checks that every model trains and that class weighting matches the ratios
 requirements.txt                 every library, pinned to an exact version
 pyproject.toml                   makes src/fraudstudy installable and holds the pytest settings
-CLAUDE.md                        rules for coding sessions in this repository
+.gitignore                       what Git leaves out: the real data, model files, artifacts/sample/, .venv
+CLAUDE.md, AGENTS.md             rules for coding sessions in this repository (one copy per coding assistant)
 LICENSE                          MIT licence
+README.md                        this page
 ```
 
 ## How to run
@@ -59,7 +67,8 @@ python -m fraudstudy.data
 #    It writes artifacts/figures/eda_*.png and artifacts/metrics/eda_summary.json.
 jupyter notebook notebooks/01_eda.ipynb
 
-# 5. The experiment: tunes and cross-validates all 30 cells on the TRAINING rows only.
+# 5. The experiment: tunes and cross-validates all 30 cells on the TRAINING rows only
+#    (18 are done: logreg, random forest, LightGBM; the 12 XGBoost and CatBoost cells are to come).
 #    Finished cells are skipped, so you can stop and restart; --force re-runs them.
 python -m fraudstudy.experiments
 
@@ -133,7 +142,7 @@ tests and trial runs work without the real dataset. Its numbers mean nothing; ne
 | Class weighting maps each ratio r to the fraud weight r / base ratio | Then F reaches the same class balance a sampler at ratio r would, so the grids are comparable |
 | One F1 threshold per cell, chosen on out-of-fold training scores | The test set never picks a threshold; one threshold is enough to explain and compare |
 | The test set is opened once, behind a guard file | Every extra look at the test set biases the final estimate |
-| Models: logistic regression, random forest, LightGBM, XGBoost, CatBoost | A linear model, a bagged tree ensemble and three boosted tree ensembles react differently to resampling and weights. XGBoost and CatBoost were added after the first 18 cells had run but before the test set was opened; the 18 cells did not change |
+| Models: logistic regression, random forest, LightGBM, XGBoost, CatBoost | A linear model, a bagged tree ensemble and three boosted tree ensembles react differently to resampling and weights. XGBoost and CatBoost were added after the first 18 cells had run; the 18 cells did not change |
 | Repeated stratified CV with the same seed for every cell; Wilcoxon vs baseline with Holm, plus a Friedman test per model | Every cell gets the same folds, so techniques can be compared fold by fold; Holm corrects for 5 tests per model |
 | PR-AUC 95% confidence intervals by stratified bootstrap (1,000 resamples) | Shows how uncertain a test score is with only about 140 test frauds |
 | Settings live in a SETTINGS block at the top of each file, not in YAML configs | One place per job that everyone can read; the YAML loading was a layer nobody needed |
@@ -176,10 +185,10 @@ commit that added this table; update them whenever one of these files changes.
 | Where is the data split into train and test? | `data.py` | `split_data()` | 54-67 (`train_test_split` with `stratify=y` at 64-66) |
 | Where are the split size and the one seed set? | `data.py` | SETTINGS | 17 (`SEED`), 18 (`TEST_SIZE`) |
 | Where are duplicate rows removed? | `data.py` | `remove_duplicates()` | 43-51 |
-| How do we know duplicates go before the split? | `experiments.py`, `evaluation.py` | `load_training_data()`, `evaluate_test_set()` | experiments 247-248, evaluation 178-179 (dedupe, then split) |
+| How do we know duplicates go before the split? | `experiments.py`, `evaluation.py` | `load_training_data()`, `evaluate_test_set()` | experiments 264-265, evaluation 133-134 (dedupe, then split) |
 | Why is `Time` dropped, and where? | `data.py` | `split_data()` | 60-62 (the comment gives the reason; `df.drop(columns=["Time", "Class"])` at 62) |
-| Where is the preprocessing (imputer, log1p, RobustScaler), and why is it inside the pipeline? | `experiments.py` | `build_preprocessor()` | 76-94 (docstring 77-81 says why) |
-| Where does SMOTE run in the experiment? | `experiments.py` | `build_pipeline()` | 106-123 (SMOTE made at 113, placed at 118-119 between preprocess and model); it runs only inside `Pipeline.fit`, called by `search.fit` in `run_cell()` at 197 |
+| Where is the preprocessing (imputer, log1p, RobustScaler), and why is it inside the pipeline? | `experiments.py` | `build_preprocessor()` | 83-101 (docstring 84-88 says why) |
+| Where does SMOTE run in the experiment? | `experiments.py` | `build_pipeline()` | 123-140 (SMOTE made at 130, placed at 139-140 between preprocess and model); it runs only inside `Pipeline.fit`, called by `search.fit` in `run_cell()` at 214 |
 | Where is our from-scratch SMOTE? | `sampler.py` | `SMOTE.fit_resample()`, `SMOTE._find_k_neighbors()` | 49-148 and 29-47; the interpolation `x_new = x_i + gap * (x_nn - x_i)` is at 133-135 |
 | How is the from-scratch SMOTE checked? | `tests/test_smote.py` | `test_scratch_smote_*` | tests 22-42 and 45-59 (neighbours checked with scikit-learn's `NearestNeighbors`) |
 | How does SMOTE make a new fraud? | `02_smote_demo.ipynb` | sections 1-3 | the picture of new frauds on the lines between real frauds, and one new point worked out by hand |
@@ -187,24 +196,25 @@ commit that added this table; update them whenever one of these files changes.
 | How do we prove predicting never resamples? | `tests/test_no_leakage.py` | `test_predicting_never_calls_the_sampler()` | 62-68 |
 | How do we prove the scaler learns from training rows only? | `tests/test_no_leakage.py` | `test_scaler_ignores_extreme_test_values()` | 71-78 |
 | How do we prove train and test share no row? | `tests/test_no_leakage.py` | `test_train_and_test_share_no_row_and_keep_the_fraud_rate()` | 81-86 |
-| Where are the ratio grid and the tuning budget set? | `experiments.py` | SETTINGS | 47 (`N_ITER`), 49 (`RATIO_GRID`), 50-51 (hybrid ratios), 55-63 (model search spaces) |
-| How does every cell get the same budget and the same ratios? | `experiments.py` | `run_cell()`, `search_space()` | 193-196 (`n_iter` and `RandomizedSearchCV`), 134-135 (ratios taken from `RATIO_GRID`) |
-| How does class weighting match the ratios? | `experiments.py` | `search_space()` | 145-149 (fraud weight = r / base, so weight x frauds = r x legit); explained in the docstring at 127-133 |
-| Where is the threshold chosen? | `experiments.py` | `best_f1_threshold()`, `run_cell()` | 153-162; called at 214 on the out-of-fold training scores from `cross_val_predict` at 201 |
-| Why is the threshold not chosen on test data? | `evaluation.py` | `evaluate_test_set()` | 189-190 read the saved threshold and never recompute it; a threshold tuned on the test set would make the test score too optimistic |
-| Where is the test set opened? | `evaluation.py` | `evaluate_test_set()` | 163-206; 179 is the only line that keeps `X_test` (`experiments.py` throws it away at 248) |
-| What stops a second opening of the test set? | `evaluation.py` | `open_guard()` | 112-125: if `TEST_SET_OPENED.json` (43) exists and there is no `--rerun-reason`, 115-120 raise an error; called at 176 before any data is loaded; tested in `tests/test_no_leakage.py` 89-96 |
-| Where is PR-AUC computed? | `experiments.py`, `evaluation.py` | `run_cell()`, `compute_metrics()` | CV: `scoring="average_precision"` at 195 (tuning) and 207 (fold scores); test: `average_precision_score` at evaluation 65 |
-| Where do the fold scores come from, and why are they comparable across cells? | `experiments.py` | `run_cell()` | 204-207 (`RepeatedStratifiedKFold` with `SEED`: the same folds for every cell) |
-| How does the bootstrap confidence interval work? | `evaluation.py` | `bootstrap_ci()` | 72-93: redraw frauds and legit rows separately (87-90), PR-AUC of each resample (91), 2.5% and 97.5% quantiles (92); `N_BOOTSTRAP` at 41 |
-| Where are the Wilcoxon, Holm and Friedman tests? | `evaluation.py` | `significance_tests()` | 209-248: Wilcoxon 233, Holm 236, Friedman 242 |
-| Where are the training class counts before and after resampling recorded? | `experiments.py` | `counts_after_resampling()`, `run_cell()` | 171-182; saved at 215-216 |
+| Where are the ratio grid and the tuning budget set? | `experiments.py` | SETTINGS | 49 (`N_ITER`), 51 (`RATIO_GRID`), 52-53 (hybrid ratios), 57-70 (model search spaces) |
+| How does every cell get the same budget and the same ratios? | `experiments.py` | `run_cell()`, `search_space()` | 210-213 (`n_iter` and `RandomizedSearchCV`), 152-155 (ratios taken from `RATIO_GRID`) |
+| How does class weighting match the ratios? | `experiments.py` | `search_space()` | 162-166 (fraud weight = r / base, so weight x frauds = r x legit); explained in the docstring at 144-149 |
+| Where is the threshold chosen? | `experiments.py` | `best_f1_threshold()`, `run_cell()` | 170-179; called at 231 on the out-of-fold training scores from `cross_val_predict` at 218 |
+| Why is the threshold not chosen on test data? | `evaluation.py` | `evaluate_test_set()` | 144-145 read the saved threshold and never recompute it; a threshold tuned on the test set would make the test score too optimistic |
+| Where is the test set opened? | `evaluation.py` | `evaluate_test_set()` | 123-157; 134 is the only line that keeps `X_test` (`experiments.py` throws it away at 265) |
+| What stops a second opening of the test set? | `evaluation.py` | `open_guard()` | 107-120: if `TEST_SET_OPENED.json` (40) exists and there is no `--rerun-reason`, 110-115 raise an error; called at 131 before any data is loaded; tested in `tests/test_no_leakage.py` 89-96 |
+| Where is PR-AUC computed? | `experiments.py`, `evaluation.py` | `run_cell()`, `compute_metrics()` | CV: `scoring="average_precision"` at 212 (tuning) and 224 (fold scores); test: `average_precision_score` at evaluation 60 |
+| Where do the fold scores come from, and why are they comparable across cells? | `experiments.py` | `run_cell()` | 221-224 (`RepeatedStratifiedKFold` with `SEED`: the same folds for every cell) |
+| How does the bootstrap confidence interval work? | `evaluation.py` | `bootstrap_ci()` | 67-88: redraw frauds and legit rows separately (82-85), PR-AUC of each resample (86), 2.5% and 97.5% quantiles (87); `N_BOOTSTRAP` at 38 |
+| Where are the Wilcoxon, Holm and Friedman tests? | `evaluation.py` | `significance_tests()` | 160-199: Wilcoxon 184, Holm 187, Friedman 193 |
+| Where are the training class counts before and after resampling recorded? | `experiments.py` | `counts_after_resampling()`, `run_cell()` | 188-199; saved at 232-233 |
 | Where are the result tables and figures made? | `03_results.ipynb` | sections 3-5 | CV table (3), test table (4), PR curves and PR-AUC bars with CI (5); the training-count figure is section 2 |
 | How is the headline cell chosen? | `03_results.ipynb` | section 3 | the cell with the highest CV PR-AUC, from training rows only |
 | Where are the significance results shown? | `03_results.ipynb` | section 7 | Wilcoxon vs baseline with Holm p-values, and the Friedman p, per model |
 
-We spot-checked 10 of these line numbers against the code when writing the table: `data.py` 62,
-`experiments.py` 113, 146, 197, 201, 214 and `evaluation.py` 115, 233, 236.
+We re-checked every line number when the first 18 results were added, and spot-checked 10 of
+them by printing the line: `data.py` 65, `experiments.py` 130, 165, 214, 218, 231 and
+`evaluation.py` 111, 134, 184, 187.
 
 ## Results
 
@@ -213,7 +223,38 @@ Filled in after the test-set evaluation on the real data.
 <!-- RESULTS:START -->
 | Model | Technique | CV PR-AUC | Test PR-AUC (95% CI) | Precision | Recall | F1 threshold |
 |---|---|---|---|---|---|---|
+| logreg | A baseline | 0.7621 | 0.7149 (0.633-0.785) | 0.794 | 0.761 | 0.069 |
+| logreg | B ROS | 0.7656 | 0.7179 (0.633-0.790) | 0.805 | 0.754 | 0.512 |
+| logreg | C RUS | 0.7638 | 0.7191 (0.635-0.790) | 0.799 | 0.754 | 0.246 |
+| logreg | D SMOTE | 0.7683 | 0.7214 (0.637-0.793) | 0.806 | 0.761 | 0.271 |
+| logreg | E SMOTE+RUS | 0.7621 | 0.6971 (0.607-0.773) | 0.806 | 0.761 | 0.971 |
+| logreg | F class weight | 0.7669 | 0.7214 (0.638-0.791) | 0.805 | 0.754 | 0.312 |
+| random_forest | A baseline | 0.8471 | 0.7968 (0.726-0.855) | 0.947 | 0.761 | 0.470 |
+| random_forest | B ROS | 0.8460 | 0.7946 (0.724-0.856) | 0.954 | 0.732 | 0.665 |
+| random_forest | C RUS | 0.8180 | 0.7947 (0.727-0.854) | 0.882 | 0.789 | 0.510 |
+| random_forest | D SMOTE | 0.8548 | 0.8324 (0.770-0.886) | 0.947 | 0.754 | 0.525 |
+| random_forest | E SMOTE+RUS | 0.8406 | 0.8192 (0.755-0.874) | 0.915 | 0.754 | 0.699 |
+| random_forest | F class weight | 0.8468 | 0.8120 (0.748-0.868) | 0.921 | 0.739 | 0.514 |
+| lightgbm | A baseline | 0.8441 | 0.8126 (0.751-0.865) | 0.920 | 0.725 | 0.019 |
+| lightgbm | B ROS | 0.8626 | 0.8109 (0.744-0.869) | 0.947 | 0.761 | 0.257 |
+| lightgbm | C RUS | 0.8441 | 0.7835 (0.708-0.863) | 0.922 | 0.746 | 0.837 |
+| lightgbm | D SMOTE | 0.8643 | 0.8232 (0.764-0.876) | 0.972 | 0.746 | 0.955 |
+| lightgbm | E SMOTE+RUS | 0.8566 | 0.8118 (0.747-0.869) | 0.945 | 0.732 | 0.988 |
+| lightgbm | F class weight | 0.6378 | 0.1096 (0.092-0.128) | 0.136 | 0.775 | 1.000 |
 <!-- RESULTS:END -->
+
+![Precision-recall curves on the test set](artifacts/figures/pr_curves.png)
+
+![Test PR-AUC with 95% bootstrap CI](artifacts/figures/pr_auc_ci.png)
+
+Every table, figure and significance test is in [`notebooks/03_results.ipynb`](notebooks/03_results.ipynb).
+
+The test set was opened twice: once on 27 Oct for 12 of the 18 cells (run early by mistake), and
+once for all 18. Nothing was changed between the two, and the results here come from the second
+opening (both are logged in `artifacts/metrics/TEST_SET_OPENED.json`).
+
+XGBoost and CatBoost are set up in the code but not run yet; their 12 cells will be added later
+with one more logged test opening.
 
 ## Limitations
 
