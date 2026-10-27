@@ -242,5 +242,5 @@ this repository; download it from Kaggle and follow its terms.
 
 ## Team
 
-Shaurya Agarwal, Pragna Jyoti Mandal, Utkarsh Gupta, Ayush, Aditi.
+Shaurya Agarwal, Pragna Jyoti Mandal, Utkarsh Gupta, Ayush, Aditi, Shubhanu Chatterjee.
 <!-- TODO: complete the list with every member's full name and part of the project. -->
