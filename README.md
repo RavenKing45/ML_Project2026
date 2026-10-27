@@ -3,9 +3,10 @@
 This is our student group project. Only about 0.17% of the payments in the ULB credit-card
 dataset are frauds, so a model that always says "legit" is 99.8% accurate and useless. We
 compare six ways of dealing with that imbalance (A no treatment, B random oversampling, C random
-undersampling, D SMOTE, E SMOTE then random undersampling, F class weighting) on three models
-(logistic regression, random forest, LightGBM). Every technique gets the same tuning budget, all
-resampling happens inside the training folds only, and the test set is opened once at the end.
+undersampling, D SMOTE, E SMOTE then random undersampling, F class weighting) on five models
+(logistic regression, random forest, LightGBM, XGBoost, CatBoost). Every technique gets the same
+tuning budget, all resampling happens inside the training folds only, and the test set is opened
+once at the end.
 The main metric is average precision (PR-AUC). A Streamlit app shows the results.
 
 **Research question:** how do data-level resampling (random oversampling, random undersampling,
@@ -20,7 +21,7 @@ data/sample/                     small fake copy with the same columns, for test
 model_build/                     our from-scratch SMOTE (a teammate's code and notebook)
 src/fraudstudy/__init__.py       marks fraudstudy as a package
 src/fraudstudy/data.py           load, check, remove duplicates, split 70/30
-src/fraudstudy/experiments.py    preprocessing, the 6 techniques, the 3 models, tuning, cross-validation
+src/fraudstudy/experiments.py    preprocessing, the 6 techniques, the 5 models, tuning, cross-validation
 src/fraudstudy/evaluation.py     the one-time test-set evaluation, metrics, confidence intervals, significance tests, figures
 notebooks/01_eda.ipynb           exploration and the EDA figures
 artifacts/figures/               saved figures (eda_*.png from the notebook, the rest from evaluation.py)
@@ -57,7 +58,7 @@ python -m fraudstudy.data
 #    It writes artifacts/figures/eda_*.png and artifacts/metrics/eda_summary.json.
 jupyter notebook notebooks/01_eda.ipynb
 
-# 5. The experiment: tunes and cross-validates all 18 cells on the TRAINING rows only.
+# 5. The experiment: tunes and cross-validates all 30 cells on the TRAINING rows only.
 #    Finished cells are skipped, so you can stop and restart; --force re-runs them.
 python -m fraudstudy.experiments
 
@@ -79,13 +80,15 @@ Step 6 writes a guard file (`artifacts/metrics/TEST_SET_OPENED.json`). Running `
 time is refused unless you add `--rerun-reason "<why>"`, and that reason is logged. Never change a
 tuned setting because of test results.
 
-**Splitting the experiment across laptops.** The 18 cells are independent, so each person can run
+**Splitting the experiment across laptops.** The 30 cells are independent, so each person can run
 some of them, e.g. one model each:
 
 ```bash
 python -m fraudstudy.experiments --models logreg          # laptop 1
 python -m fraudstudy.experiments --models random_forest   # laptop 2
 python -m fraudstudy.experiments --models lightgbm        # laptop 3
+python -m fraudstudy.experiments --models xgboost         # laptop 4
+python -m fraudstudy.experiments --models catboost        # laptop 5
 ```
 
 Use the same code version and `requirements.txt` on every laptop (and either all or none with
@@ -97,8 +100,8 @@ from the seed, so the cells line up fold by fold.
 
 The same steps on the fake sample (`--source sample --quick`). Everything goes to
 `artifacts/sample/`, which is Git-ignored, so a trial never touches the real results. It takes
-about 3 minutes; random forest is the slow part, so add `--models logreg lightgbm` to step 5 for a
-1-minute run.
+about 4 minutes; CatBoost is the slow part, so add `--models logreg random_forest lightgbm xgboost`
+to step 5 for a 2-minute run.
 
 ```bash
 python -m fraudstudy.data --source sample
@@ -150,13 +153,15 @@ the real results are committed; otherwise the app shows "No results".
 | Class weighting maps each ratio r to the fraud weight r / base ratio | Then F reaches the same class balance a sampler at ratio r would, so the grids are comparable |
 | One F1 threshold per cell, chosen on out-of-fold training scores | The test set never picks a threshold; one threshold is enough to explain and compare |
 | The test set is opened once, behind a guard file | Every extra look at the test set biases the final estimate |
-| Models: logistic regression, random forest, LightGBM | A linear model, a bagged and a boosted tree ensemble react differently to resampling and weights |
+| Models: logistic regression, random forest, LightGBM, XGBoost, CatBoost | A linear model, a bagged tree ensemble and three boosted tree ensembles react differently to resampling and weights. XGBoost and CatBoost were added after the first 18 cells had run but before the test set was opened; the 18 cells did not change |
 | Repeated stratified CV with the same seed for every cell; Wilcoxon vs baseline with Holm, plus a Friedman test per model | Every cell gets the same folds, so techniques can be compared fold by fold; Holm corrects for 5 tests per model |
 | PR-AUC 95% confidence intervals by stratified bootstrap (1,000 resamples) | Shows how uncertain a test score is with only about 140 test frauds |
 | Settings live in a SETTINGS block at the top of each file, not in YAML configs | One place per job that everyone can read; the YAML loading was a layer nobody needed |
 | All research code in three files: `data.py`, `experiments.py`, `evaluation.py` | Each step is one `python -m fraudstudy.<file>` command and every member can explain every line |
 | One Streamlit app (`app.py`) instead of a FastAPI backend and a React dashboard | One small Python file is enough to present saved results; no API contracts to maintain |
 | `statsmodels` added | Its `multipletests` does the Holm correction, instead of our own code |
+| `xgboost` added | XGBoost, the most widely used boosted-tree library, as a fourth model |
+| `catboost` added | CatBoost, a boosted-tree library with ordered boosting and symmetric trees, as a fifth model |
 | `streamlit` added | Runs the presentation app |
 | One `requirements.txt` with exact versions, including pytest and the two `-e` installs | Everyone gets the same versions with one command; Jupyter is installed separately because only notebook users need it |
 | Only the LightGBM pipelines are committed (`artifacts/models/lightgbm__*.joblib`) | The app needs them and each is about 2.4 MB; the other models stay local |

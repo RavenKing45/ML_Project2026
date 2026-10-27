@@ -19,3 +19,6 @@ __pycache__/
 
 # Secrets
 .env
+
+# CatBoost writes a training log folder unless told not to
+catboost_info/
