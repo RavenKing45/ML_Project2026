@@ -255,6 +255,47 @@ The test set was opened twice: once on 27 Oct for 12 of the 18 cells (run early 
 once for all 18. Nothing was changed between the two, and the results here come from the second
 opening (both are logged in `artifacts/metrics/TEST_SET_OPENED.json`).
 
+## Conclusions
+
+What we found, using the numbers from the sections above.
+
+1. **The model matters more than the technique.** Logistic regression stays between 0.70 and
+   0.72 test PR-AUC whatever we do to the data, while random forest and LightGBM reach 0.78 to
+   0.83. Inside one model, the techniques move test PR-AUC by about 0.04 at most (leaving out
+   LightGBM with class weighting, point 5).
+2. **For LightGBM, oversampling helps a little.** Random oversampling (B) and SMOTE (D) both
+   beat the baseline on the cross-validation folds by about 0.02 PR-AUC, and both stay
+   significant after the Holm correction. SMOTE + undersampling (E) was also better (+0.011),
+   but not significantly.
+3. **For random forest and logistic regression, most techniques make no clear difference.**
+   The only significant results are small: class weighting helped logistic regression by
+   0.006, and random undersampling made random forest worse by 0.027, because it throws away
+   most of the legit rows.
+4. **SMOTE never hurt.** Its median difference from the baseline was positive for all three
+   models (+0.009 logistic regression, +0.005 random forest, +0.019 LightGBM), although only
+   the LightGBM one is significant.
+5. **Class weighting can break a model.** LightGBM with class weighting (F) fell to 0.110 test
+   PR-AUC. The search picked a fraud weight of 299.5, the model then gave 808 test payments the
+   same top score of 1.0, and it could not rank them against each other (explained in the
+   Results section above).
+6. **The test set is too small to separate the good cells.** With 142 frauds in the test set,
+   the 95% confidence intervals overlap a lot: the headline cell lightgbm__smote has 0.823
+   (0.764-0.876) and the LightGBM baseline 0.813 (0.751-0.865). The differences we can trust
+   come from the 15 cross-validation folds, not from one test score.
+7. **Accuracy says nothing here.** Every cell is between 99.14% and 99.95% accurate, including
+   LightGBM F, which wrongly flags 698 legit payments.
+
+**Our answer to the research question:** no technique gave a big improvement over training on
+the data as it is; the choice of model mattered much more. With LightGBM, oversampling
+(random or SMOTE) gave a small but real gain. With random forest and logistic regression the
+techniques made little difference, undersampling lost information, and class weighting has to
+be tuned with care.
+
+**Our pick:** lightgbm__smote had the best CV PR-AUC (0.864), so it is our headline cell. On
+the test set it scores 0.823. Out of 100,000 payments it would catch about 129 of the 173
+frauds, miss 44, and wrongly flag 4 legit payments. random_forest__smote had a slightly higher
+test PR-AUC (0.832), but we choose on training data only, never on the test set.
+
 ## Limitations
 
 - The data is one public, anonymised two-day dump of European card payments from 2013. V1..V28
