@@ -4,9 +4,9 @@
 "An Empirical Study of Class-Imbalance Handling Techniques for Credit Card Fraud Detection",
 a student group project. We compare 6 ways of handling class imbalance (A baseline,
 B RandomOverSampler, C RandomUnderSampler, D SMOTE, E SMOTE then RandomUnderSampler,
-F class weighting) on 5 models (logistic regression, random forest, LightGBM, XGBoost,
-CatBoost) using the ULB credit-card dataset, without data leakage. Python scripts compute the
-results; Jupyter notebooks show and explain them. There is no app, website or server.
+F class weighting) on 3 models (logistic regression, random forest, LightGBM) using the ULB
+credit-card dataset, without data leakage. Python scripts compute the results; Jupyter
+notebooks show and explain them. There is no app, website or server.
 
 ## Where things are (the final layout: do not add folders or files unless the task says so)
 data/raw/creditcard.csv          the real dataset (Git-ignored; download from Kaggle)
@@ -17,7 +17,7 @@ model_build/                     our from-scratch SMOTE and its notebook (a team
                                  src/smote_from_scratch/__init__.py, sampler.py, SMOTE_algo.ipynb
 src/fraudstudy/__init__.py       marks fraudstudy as a package
 src/fraudstudy/data.py           load, check, remove duplicates, split 70/30
-src/fraudstudy/experiments.py    preprocessing, the 6 techniques, the 5 models, tuning, cross-validation
+src/fraudstudy/experiments.py    preprocessing, the 6 techniques, the 3 models, tuning, cross-validation
 src/fraudstudy/evaluation.py     the one-time test-set evaluation, metrics, confidence intervals,
                                  significance tests
 notebooks/01_eda.ipynb           exploration; writes artifacts/figures/eda_*.png and

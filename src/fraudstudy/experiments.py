@@ -1,4 +1,4 @@
-"""The experiment: 6 imbalance techniques x 5 models, each tuned and cross-validated on the
+"""The experiment: 6 imbalance techniques x 3 models, each tuned and cross-validated on the
 TRAINING split only.
 
 For every (model, technique) cell, run_cell() tunes the pipeline, picks the F1 threshold on
@@ -18,7 +18,6 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
-from catboost import CatBoostClassifier
 from imblearn.over_sampling import SMOTE, RandomOverSampler
 from imblearn.pipeline import Pipeline
 from imblearn.under_sampling import RandomUnderSampler
@@ -39,7 +38,6 @@ from sklearn.model_selection import (
     train_test_split,
 )
 from sklearn.preprocessing import FunctionTransformer, RobustScaler
-from xgboost import XGBClassifier
 
 from fraudstudy.data import PROJECT_ROOT, SEED, load_data, remove_duplicates, split_data
 
@@ -53,7 +51,7 @@ HYBRID_SMOTE_RATIOS = [0.005, 0.01, 0.05]  # E: SMOTE up to a, then ...
 HYBRID_RUS_RATIOS = [0.1, 0.5, 1.0]  # ... undersample the legit rows down to b (only a < b)
 SMOTE_K = 5  # neighbours SMOTE picks from
 TECHNIQUES = ["baseline", "ros", "rus", "smote", "smote_rus", "class_weight"]  # A to F
-MODELS = ["logreg", "random_forest", "lightgbm", "xgboost", "catboost"]
+MODELS = ["logreg", "random_forest", "lightgbm"]
 MODEL_PARAM_SPACES = {
     "logreg": {"C": [0.001, 0.01, 0.1, 1, 10], "max_iter": [2000]},
     "random_forest": {"n_estimators": [200], "max_depth": [8, 12, 16, None],
@@ -62,11 +60,6 @@ MODEL_PARAM_SPACES = {
     "lightgbm": {"n_estimators": [200, 400], "learning_rate": [0.03, 0.1],
                  "num_leaves": [15, 31, 63], "min_child_samples": [20, 50],
                  "subsample": [0.8, 1.0], "subsample_freq": [1], "colsample_bytree": [0.8, 1.0]},
-    "xgboost": {"n_estimators": [200, 400], "learning_rate": [0.03, 0.1],
-                "max_depth": [4, 6, 8], "min_child_weight": [1, 5],
-                "subsample": [0.8, 1.0], "colsample_bytree": [0.8, 1.0]},
-    "catboost": {"iterations": [200, 400], "learning_rate": [0.03, 0.1],
-                 "depth": [4, 6, 8], "l2_leaf_reg": [1, 3, 10]},
 }
 # --quick: fewer folds and tries, and (on the real data only) 10% of the training rows.
 QUICK = {"cv_folds": 3, "cv_repeats": 1, "n_iter": 3, "train_fraction": 0.10}
@@ -109,14 +102,6 @@ def build_model(model: str) -> object:
         return RandomForestClassifier(random_state=SEED, n_jobs=N_JOBS)
     if model == "lightgbm":
         return LGBMClassifier(random_state=SEED, verbose=-1, n_jobs=N_JOBS)
-    if model == "xgboost":
-        # "hist" groups feature values into bins, which is much faster on 200,000 rows.
-        return XGBClassifier(random_state=SEED, n_jobs=N_JOBS, tree_method="hist",
-                             verbosity=0)
-    if model == "catboost":
-        # allow_writing_files=False stops CatBoost from creating a catboost_info/ folder.
-        return CatBoostClassifier(random_seed=SEED, thread_count=N_JOBS, verbose=0,
-                                  allow_writing_files=False)
     raise ValueError(f"Unknown model: {model}")
 
 
@@ -159,7 +144,7 @@ def search_space(model: str, technique: str, y_train: pd.Series) -> dict | list:
         # One small grid per (a, b) pair, so a is always below b.
         return [{**space, "smote__sampling_strategy": [a], "rus__sampling_strategy": [b]}
                 for a, b in pairs]
-    elif technique == "class_weight" and model in ["lightgbm", "xgboost", "catboost"]:
+    elif technique == "class_weight" and model == "lightgbm":
         space["model__scale_pos_weight"] = [float(r) / float(base) for r in ratios]
     elif technique == "class_weight":
         space["model__class_weight"] = [{0: 1.0, 1: float(r) / float(base)} for r in ratios]
