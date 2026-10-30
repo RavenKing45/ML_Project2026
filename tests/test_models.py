@@ -1,5 +1,5 @@
-"""Checks that every model in MODELS trains and scores, and that class weighting for the boosted
-trees uses the same ratios as the samplers (fake sample only).
+"""Checks that every model in MODELS trains and scores, and that class weighting for LightGBM
+uses the same ratios as the samplers (fake sample only).
 
 The models are made small (20 trees) so the whole file runs in a few seconds.
 """
@@ -13,8 +13,6 @@ SMALL = {  # a fast version of each model; the real settings come from the searc
     "logreg": {"model__max_iter": 2000},
     "random_forest": {"model__n_estimators": 20},
     "lightgbm": {"model__n_estimators": 20},
-    "xgboost": {"model__n_estimators": 20},
-    "catboost": {"model__iterations": 20},
 }
 
 
@@ -33,10 +31,9 @@ def test_every_model_fits_and_scores(split: tuple) -> None:
         assert ((scores >= 0) & (scores <= 1)).all(), name
 
 
-def test_boosted_models_weight_frauds_by_the_ratio(split: tuple) -> None:
+def test_lightgbm_weights_frauds_by_the_ratio(split: tuple) -> None:
     _, _, y_train, _ = split
     base = (y_train == 1).sum() / (y_train == 0).sum()
     expected = [r / base for r in experiments.RATIO_GRID if r > base * 1.05]
-    for name in ["lightgbm", "xgboost", "catboost"]:
-        space = experiments.search_space(name, "class_weight", y_train)
-        assert space["model__scale_pos_weight"] == expected, name
+    space = experiments.search_space("lightgbm", "class_weight", y_train)
+    assert space["model__scale_pos_weight"] == expected
